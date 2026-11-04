@@ -71,10 +71,18 @@ export function seedIfEmpty() {
   const refReelMedia = copyIfExists(path.resolve(ROOT, '../references/ref_reel_2026-10-29.mp4'), 'media', 'seed-ref-reel.mp4', true);
   const adBMedia = copyIfExists(path.resolve(ROOT, '../bmdgl-week1-content/AdB_FreeAudit_15s_9x16.mp4'), 'media', 'seed-adb-15s.mp4');
   const adCMedia = copyIfExists(path.resolve(ROOT, '../bmdgl-week1-content/AdC_FreeAudit_Story_v3_54s_9x16.mp4'), 'media', 'seed-adc-story.mp4');
-  const post1Thumb = copyIfExists(path.resolve(ROOT, '../bmdgl-week1-content/01_Post1_FreeAudit_4x5.png'), 'thumbs', 'seed-post1.png');
-  const post3Thumb = copyIfExists(path.resolve(ROOT, '../bmdgl-week1-content/03_Post3_GetOnline_4x5.png'), 'thumbs', 'seed-post3.png');
-  const post5Thumb = copyIfExists(path.resolve(ROOT, '../bmdgl-week1-content/05_Post5_ConnectTeaser_4x5.png'), 'thumbs', 'seed-post5.png');
-  const post6Thumb = copyIfExists(path.resolve(ROOT, '../bmdgl-week1-content/06_Post6_ThaiOrigins_Testimonial_4x5.png'), 'thumbs', 'seed-thai-origins.png');
+  const extractFrame = (videoRel, thumbName) => {
+    if (!videoRel || !config.hasFfmpeg) return null;
+    try {
+      const out = path.join(config.dataDir, 'thumbs', thumbName);
+      execFileSync(config.ffmpegBin, ['-y', '-ss', '1.5', '-i', path.join(config.dataDir, videoRel), '-frames:v', '1', '-vf', 'scale=720:-2', '-q:v', '3', out], { stdio: 'ignore', timeout: 20000, windowsHide: true });
+      return fs.existsSync(out) ? `thumbs/${thumbName}` : null;
+    } catch { return null; }
+  };
+  const post5Thumb = extractFrame(refReelMedia, 'seed-ref-reel.jpg');
+  const post1Thumb = extractFrame(adCMedia, 'seed-adc-story.jpg');
+  const post6Thumb = extractFrame(adBMedia, 'seed-adb-15s.jpg');
+  const post3Thumb = null;
 
   const seedItems = [
     {

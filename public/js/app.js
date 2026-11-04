@@ -386,106 +386,65 @@ function renderAuth() {
   });
 }
 
-// ---------- Main Application Render ----------
+// ---------- Main Application Render (Full-Width Top Navbar Layout) ----------
 function renderApp() {
   if (!state.user) return renderAuth();
   const app = document.getElementById('app');
   const s = state.stats || { total: 0, favorites: 0, pending: 0, testing: 0, used: 0, prompts: 0 };
   const f = state.filters;
-  const isAllVault = state.view === 'vault' && !f.fav && !f.pending && !f.status && !f.collection && !f.category;
 
   app.innerHTML = `
-    <div class="shell">
-      <div class="sidebar-backdrop ${state.sidebarOpen ? 'open' : ''}" id="sb-backdrop"></div>
-      <aside class="sidebar ${state.sidebarOpen ? 'open' : ''}">
-        <div class="brand-box">
-          <img src="/logo.png" alt="BMDGL">
-          <div>
-            <div class="b-title">BMDGL Vault</div>
-            <div class="b-sub">Digital Growth Lab</div>
-          </div>
-        </div>
-
-        <div class="nav-group-label">Feed &amp; Workflow</div>
-        <button class="nav-item ${isAllVault ? 'active' : ''}" data-nav="all">
-          <span>🎬 All Shared Content</span>
-          <span class="count">${s.total}</span>
-        </button>
-        <button class="nav-item ${state.view === 'vault' && f.fav === '1' ? 'active' : ''}" data-nav="fav">
-          <span>⭐ Starred</span>
-          <span class="count">${s.favorites}</span>
-        </button>
-        <button class="nav-item ${state.view === 'vault' && f.pending === '1' ? 'active' : ''}" data-nav="pending">
-          <span>💬 Need Comment / DM</span>
-          <span class="count ${s.pending ? 'badge-warn' : ''}">${s.pending}</span>
-        </button>
-        <button class="nav-item ${state.view === 'vault' && f.status === 'testing' ? 'active' : ''}" data-nav="testing">
-          <span>🧪 Testing</span>
-          <span class="count">${s.testing}</span>
-        </button>
-        <button class="nav-item ${state.view === 'vault' && f.status === 'used' ? 'active' : ''}" data-nav="used">
-          <span>✅ Used in Content</span>
-          <span class="count">${s.used}</span>
-        </button>
-
-        <div class="nav-group-label">Libraries</div>
-        <button class="nav-item ${state.view === 'prompts' ? 'active' : ''}" data-view="prompts">
-          <span>✨ Prompts</span>
-          <span class="count">${s.prompts}</span>
-        </button>
-        <button class="nav-item ${state.view === 'hooks' ? 'active' : ''}" data-view="hooks">
-          <span>🎯 Hooks &amp; Payoffs</span>
-        </button>
-        <button class="nav-item ${state.view === 'tools' ? 'active' : ''}" data-view="tools">
-          <span>🧰 Tools &amp; Links</span>
-        </button>
-        <button class="nav-item ${state.view === 'team' ? 'active' : ''}" data-view="team">
-          <span>👥 Team (${TEAM_DEMO_USERS.length})</span>
-        </button>
-
-        <div class="nav-group-label">
-          <span>Collections</span>
-          <button type="button" id="btn-new-collection">＋</button>
-        </div>
-        ${state.collections.map(c => `
-          <button class="nav-item ${state.view === 'vault' && String(f.collection) === String(c.id) ? 'active' : ''}" data-collection="${c.id}">
-            <span>${esc(c.emoji || '📁')} ${esc(c.name)}</span>
-            <span class="count">${c.n || 0}</span>
-          </button>
-        `).join('')}
-
-        <div class="sidebar-footer">
-          <div class="user-row">
-            <span class="avatar" style="background:${esc(state.user.color || '#2563EB')}">${esc(initials(state.user.name))}</span>
-            <div class="user-info">
-              <div class="u-name">${esc(state.user.name)}</div>
-              <div class="u-role">${esc(state.user.role)}</div>
+    <div class="app-layout">
+      <header class="top-header">
+        <div class="top-header-inner">
+          <div class="brand-link" data-nav="all">
+            <img src="/logo.png" alt="BMDGL">
+            <div>
+              <span class="b-title">BMDGL Vault</span>
+              <span class="b-sub">Digital Growth Lab</span>
             </div>
-            <button class="icon-btn" id="btn-logout" title="Switch account / Sign out" style="padding:5px 8px">↪</button>
           </div>
-        </div>
-      </aside>
 
-      <div class="main-area">
-        <header class="topbar">
-          <button class="mobile-menu-btn" id="btn-mobile-menu">☰</button>
+          <nav class="top-nav-tabs">
+            <button type="button" class="top-nav-btn ${state.view === 'vault' ? 'active' : ''}" data-nav="all">
+              🎬 Feed <span class="pill-count">${s.total}</span>
+            </button>
+            <button type="button" class="top-nav-btn ${state.view === 'prompts' ? 'active' : ''}" data-view="prompts">
+              ✨ Prompts <span class="pill-count">${s.prompts}</span>
+            </button>
+            <button type="button" class="top-nav-btn ${state.view === 'hooks' ? 'active' : ''}" data-view="hooks">
+              🎯 Hooks &amp; Payoffs
+            </button>
+            <button type="button" class="top-nav-btn ${state.view === 'tools' ? 'active' : ''}" data-view="tools">
+              🧰 Tools &amp; Links
+            </button>
+            <button type="button" class="top-nav-btn ${state.view === 'team' ? 'active' : ''}" data-view="team">
+              👥 Team (${TEAM_DEMO_USERS.length})
+            </button>
+          </nav>
+
           <div class="search-box">
             <span class="s-icon">🔍</span>
-            <input id="global-search" type="search" value="${esc(f.q)}" placeholder="Search reels, prompts, tools, hooks, tags…">
+            <input id="global-search" type="search" value="${esc(f.q)}" placeholder="Search reels, prompts, tools, hooks…">
             <kbd>/</kbd>
           </div>
 
-          <div class="topbar-actions">
+          <div class="header-right">
             <button class="icon-btn ${state.layout === 'grid' ? 'active' : ''}" data-layout="grid" title="Grid view">⊞</button>
             <button class="icon-btn ${state.layout === 'list' ? 'active' : ''}" data-layout="list" title="Compact list">☰</button>
-            <button class="icon-btn" id="btn-theme" title="Switch Dark / Light theme">${state.theme === 'dark' ? '☀️' : '🌙'}</button>
+            <button class="icon-btn" id="btn-theme" title="Toggle Dark / Light mode">${state.theme === 'dark' ? '☀️' : '🌙'}</button>
+            <div class="user-pill">
+              <span class="avatar" style="background:${esc(state.user.color || '#2563EB')}">${esc(initials(state.user.name))}</span>
+              <span>${esc(state.user.name.replace(/\s*\(Admin\)/i, ''))}</span>
+              <button class="icon-btn" id="btn-logout" title="Switch account / Sign out" style="padding:3px 7px;border:none">↪</button>
+            </div>
           </div>
-        </header>
+        </div>
+      </header>
 
-        <main class="content-wrap">
-          ${renderMainView()}
-        </main>
-      </div>
+      <main class="page-container">
+        ${renderMainView()}
+      </main>
     </div>
   `;
 
@@ -528,14 +487,21 @@ function renderVaultView() {
 
     <div class="filter-bar">
       <div class="filter-chips">
-        <button class="chip ${!f.platform ? 'active' : ''}" data-plat="">All</button>
+        <button class="chip ${!f.platform && !f.fav && !f.pending ? 'active' : ''}" data-plat="">All (${state.stats?.total || 0})</button>
+        <button class="chip ${f.fav === '1' ? 'active' : ''}" data-nav="fav">⭐ Starred</button>
+        <button class="chip ${f.pending === '1' ? 'active' : ''}" data-nav="pending">💬 Need Comment / DM</button>
         ${['instagram', 'facebook', 'youtube', 'tiktok', 'skool', 'drive'].map(p => {
           const info = PLATFORMS[p];
           return `<button class="chip ${f.platform === p ? 'active' : ''}" data-plat="${p}">${esc(info.label)}</button>`;
         }).join('')}
       </div>
 
-      <div style="margin-left:auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        <select class="filter-select" id="flt-collection">
+          <option value="">All Collections</option>
+          ${state.collections.map(c => `<option value="${c.id}" ${String(f.collection) === String(c.id) ? 'selected' : ''}>${esc(c.emoji || '📁')} ${esc(c.name)} (${c.n || 0})</option>`).join('')}
+        </select>
+
         <select class="filter-select" id="flt-category">
           <option value="">All Categories</option>
           ${CATEGORIES.map(c => `<option value="${esc(c)}" ${f.category === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
@@ -607,7 +573,7 @@ function renderItemCard(item) {
         <h3 class="vcard-title bn">${esc(item.title || 'Shared Content')}</h3>
 
         <div class="vcard-what">
-          <strong>What it does:</strong> ${esc(item.what_it_does || item.summary || item.hook_text || 'Auto-analyzing content…')}
+          <div class="vcard-what-text"><strong>What it does:</strong> ${esc(item.what_it_does || item.summary || item.hook_text || 'Auto-analyzing content…')}</div>
         </div>
 
         ${item.comment_keyword ? `
@@ -1376,11 +1342,14 @@ function bindShellEvents() {
 
   app.querySelectorAll('[data-plat]').forEach(btn => {
     btn.addEventListener('click', () => {
+      state.filters.fav = '';
+      state.filters.pending = '';
       state.filters.platform = btn.dataset.plat;
       loadItems();
     });
   });
 
+  app.querySelector('#flt-collection')?.addEventListener('change', (e) => { state.filters.collection = e.target.value; loadItems(); });
   app.querySelector('#flt-category')?.addEventListener('change', (e) => { state.filters.category = e.target.value; loadItems(); });
   app.querySelector('#flt-sort')?.addEventListener('change', (e) => { state.filters.sort = e.target.value; loadItems(); });
 
