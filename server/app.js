@@ -268,6 +268,11 @@ for (const dir of ['thumbs', 'media', 'uploads']) {
         }
       },
     }),
+    express.static(path.join(config.publicDir, 'files', dir), {
+      index: false,
+      dotfiles: 'deny',
+      maxAge: '7d',
+    }),
   ];
   if (config.bundledDataDir && config.bundledDataDir !== config.dataDir) {
     handlers.push(express.static(path.join(config.bundledDataDir, dir), {

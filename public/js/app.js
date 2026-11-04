@@ -459,7 +459,7 @@ function renderApp() {
             </button>
             ${isAdmin ? `
               <button type="button" class="top-nav-btn ${state.view === 'agent' ? 'active' : ''}" data-view="agent">
-                ✦ Vault Agent
+                Vault Agent
                 <span class="pill-count" style="color:var(--accent)">● Live</span>
               </button>
               <button type="button" class="top-nav-btn ${state.view === 'team' ? 'active' : ''}" data-view="team">
@@ -528,7 +528,7 @@ function renderVaultView() {
       <div class="agent-advisor-banner">
         <div class="aab-left">
           <div class="aab-head">
-            <span class="aab-badge">✦ Vault Agent · Active</span>
+            <span class="aab-badge">Vault Agent · Active</span>
             <span style="font-size:12px;color:var(--mute)">Auto-Creates Categories · Writes Perfect Titles &amp; Descriptions · Learns Your Preferences</span>
           </div>
           <div class="aab-text">
@@ -545,7 +545,7 @@ function renderVaultView() {
       <div class="qc-top">
         <div class="qc-title">
           <span>Quick Drop to Vault</span>
-          <span class="qc-badge">✦ Vault Agent Auto-Categorizes &amp; Writes Title + Description</span>
+          <span class="qc-badge">Vault Agent Auto-Categorizes &amp; Writes Title + Description</span>
         </div>
         <button type="button" class="btn btn-sm" id="btn-open-upload">📎 Upload File</button>
       </div>
@@ -823,7 +823,7 @@ function renderAgentView() {
       <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:16px">
         <div style="max-width:760px">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
-            <span class="aab-badge">✦ Autonomous Vault Agent · Live</span>
+            <span class="aab-badge">Autonomous Vault Agent · Live</span>
             <span class="type-pill">Admin Advisor for Pritom</span>
             ${insights.created_at ? `<span style="font-size:12px;color:var(--mute)">Updated ${relTime(insights.created_at)}</span>` : ''}
           </div>
@@ -837,7 +837,7 @@ function renderAgentView() {
 
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button type="button" class="btn" id="btn-agent-reanalyze-all">↻ Re-Analyze All Items</button>
-          <button type="button" class="btn btn-primary" id="btn-agent-refresh-insights">✦ Ask Vault Agent for Fresh Upgrade Ideas</button>
+          <button type="button" class="btn btn-primary" id="btn-agent-refresh-insights">Ask Vault Agent for Fresh Upgrade Ideas</button>
         </div>
       </div>
 
@@ -893,7 +893,7 @@ function renderAgentView() {
             const isCustom = customCats.some(x => x.name.toLowerCase() === cat.toLowerCase()) || !['AI Tools', 'Video Editing', 'Copywriting', 'Design', 'Marketing', 'Automation', 'Social Media', 'Coding', 'Business'].includes(cat);
             return `
               <button type="button" class="chip cat-chip" data-agent-filter-cat="${esc(cat)}" style="${isCustom ? 'border-color:var(--accent);color:var(--accent)' : ''}">
-                ${isCustom ? '✦ ' : ''}${esc(cat)}
+                ${esc(cat)}
               </button>
             `;
           }).join('')}
@@ -914,7 +914,7 @@ function renderAgentView() {
           <div class="lib-card" style="border-color:rgba(16,185,129,0.28)">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
               <span class="cat-badge">${esc(r.category || 'Repository Upgrade')}</span>
-              <span style="font-size:11.5px;color:var(--accent);font-weight:700">✦ Agent Recommendation</span>
+              <span style="font-size:11.5px;color:var(--accent);font-weight:700">Agent Recommendation</span>
             </div>
             <h4 style="margin:4px 0 0;font-size:16px;font-weight:700;color:var(--ink);line-height:1.38">${esc(r.title)}</h4>
             <p style="margin:0;font-size:13.5px;color:var(--ink-2);line-height:1.55">
@@ -1884,7 +1884,7 @@ function bindMainEvents() {
   main.querySelector('#btn-agent-refresh-insights')?.addEventListener('click', async (e) => {
     const btn = e.currentTarget;
     btn.disabled = true;
-    btn.textContent = '✦ Asking Vault Agent…';
+    btn.textContent = 'Asking Vault Agent…';
     try {
       state.agentData = await api('/api/agent/insights/refresh', { method: 'POST' });
       state.stats = await api('/api/stats');
@@ -1892,7 +1892,7 @@ function bindMainEvents() {
       renderApp();
     } catch (err) {
       btn.disabled = false;
-      btn.textContent = '✦ Ask Vault Agent for Fresh Upgrade Ideas';
+      btn.textContent = 'Ask Vault Agent for Fresh Upgrade Ideas';
       toast(err.message, true);
     }
   });
