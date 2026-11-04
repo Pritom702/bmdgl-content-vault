@@ -47,6 +47,7 @@ const state = {
   profileItems: [],
   suggestionsData: { keywords: [], categories: [], items: [], resources: [] },
   team: { members: [], inviteCode: null },
+  agentData: null,
   pollTimer: null,
 };
 
@@ -180,6 +181,12 @@ async function init() {
   }
 }
 
+function getActiveCategories() {
+  return (state.stats?.allCategories && state.stats.allCategories.length)
+    ? state.stats.allCategories
+    : CATEGORIES;
+}
+
 async function loadAllData() {
   const [stats, colls, tags, sug] = await Promise.all([
     api('/api/stats'),
@@ -197,6 +204,8 @@ async function loadAllData() {
     state.profileItems = (await api('/api/items?fav=1')).items || [];
   } else if (state.view === 'team' && state.user?.role === 'admin') {
     state.team = await api('/api/team');
+  } else if (state.view === 'agent' && state.user?.role === 'admin') {
+    state.agentData = await api('/api/agent/insights');
   }
   await loadItems();
   scheduleBackgroundPoll();
@@ -449,6 +458,10 @@ function renderApp() {
               Prompts, Tools &amp; Links <span class="pill-count">${s.resources ?? s.prompts ?? 0}</span>
             </button>
             ${isAdmin ? `
+              <button type="button" class="top-nav-btn ${state.view === 'agent' ? 'active' : ''}" data-view="agent">
+                ✦ AI Agent
+                <span class="pill-count" style="color:var(--accent)">● Live</span>
+              </button>
               <button type="button" class="top-nav-btn ${state.view === 'team' ? 'active' : ''}" data-view="team">
                 Team (${TEAM_CREDENTIALS.length})
                 ${s.pendingPasswordResets ? `<span class="user-star-count" style="margin-left:4px">🔔 ${s.pendingPasswordResets}</span>` : ''}
@@ -490,6 +503,7 @@ function renderApp() {
 function renderMainView() {
   if (state.view === 'resources') return renderResourcesView();
   if (state.view === 'profile') return renderProfileView();
+  if (state.view === 'agent' && state.user?.role === 'admin') return renderAgentView();
   if (state.view === 'team' && state.user?.role === 'admin') return renderTeamView();
   return renderVaultView();
 }
@@ -504,13 +518,34 @@ function renderVaultView() {
   for (const row of (state.stats?.byCategory || [])) {
     byCatMap[row.category || row.k] = row.n;
   }
+  const activeCats = getActiveCategories();
+  const isAdmin = state.user?.role === 'admin';
+  const agentInsights = state.stats?.agentInsights;
+  const topRec = agentInsights?.recommendations?.[0];
 
   return `
+    ${isAdmin && agentInsights ? `
+      <div class="agent-advisor-banner">
+        <div class="aab-left">
+          <div class="aab-head">
+            <span class="aab-badge">✦ Gemini AI Agent · Active</span>
+            <span style="font-size:12px;color:var(--mute)">Auto-Creates Categories · Writes Perfect Titles &amp; Descriptions · Learns Your Preferences</span>
+          </div>
+          <div class="aab-text">
+            <strong>Pritom Upgrade Tip:</strong> ${esc(topRec ? `${topRec.title} — ${topRec.action}` : agentInsights.summary)}
+          </div>
+        </div>
+        <div class="aab-actions">
+          <button type="button" class="btn btn-sm btn-primary" data-open-agent-view="1">Open AI Agent Advisor →</button>
+        </div>
+      </div>
+    ` : ''}
+
     <form class="quick-composer" id="instant-drop-form">
       <div class="qc-top">
         <div class="qc-title">
           <span>Quick Drop to Vault</span>
-          <span class="qc-badge">Auto-Detects Video, Category, Title &amp; Description</span>
+          <span class="qc-badge">✦ Gemini AI Agent Auto-Categorizes &amp; Writes Title + Description</span>
         </div>
         <button type="button" class="btn btn-sm" id="btn-open-upload">📎 Upload File</button>
       </div>
@@ -520,7 +555,7 @@ function renderVaultView() {
         <button type="submit" class="qc-submit" id="qc-submit-btn">Save to Vault →</button>
       </div>
       <div class="qc-foot">
-        <span id="qc-live-hint">Paste the content link and the prompt/tool link — the Vault automatically categorizes it and writes a concise, accurate description and usage guide.</span>
+        <span id="qc-live-hint">Paste the content link and the prompt/tool link — the Gemini AI Agent identifies the exact category (or creates a new category if needed) and writes a clean, accurate title and description.</span>
       </div>
     </form>
 
@@ -530,7 +565,7 @@ function renderVaultView() {
         <div class="filter-chips">
           <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--mute);margin-right:4px">Categories:</span>
           <button class="chip cat-chip ${!f.category ? 'active' : ''}" data-cat="">All (${state.stats?.total || 0})</button>
-          ${CATEGORIES.filter(c => c !== 'Other' || byCatMap[c]).map(c => {
+          ${activeCats.filter(c => c !== 'Other' || byCatMap[c]).map(c => {
             const count = byCatMap[c] || 0;
             return `<button class="chip cat-chip ${f.category === c ? 'active' : ''}" data-cat="${esc(c)}">${esc(c)}${count ? ` (${count})` : ''}</button>`;
           }).join('')}
@@ -771,6 +806,129 @@ function renderProfileView() {
         ${state.profileItems.map(renderItemCard).join('')}
       </div>
     `}
+  `;
+}
+
+// ---------- Gemini AI Agent & Pritom Upgrade Advisor View ----------
+function renderAgentView() {
+  const data = state.agentData || {};
+  const insights = data.insights || state.stats?.agentInsights || {};
+  const learned = Array.isArray(insights.learned_preferences) ? insights.learned_preferences : [];
+  const recs = Array.isArray(insights.recommendations) ? insights.recommendations : [];
+  const allCats = (data.allCategories || getActiveCategories()).filter(c => c !== 'Other');
+  const customCats = Array.isArray(data.customCategories) ? data.customCategories : [];
+  const modelName = data.model || insights.model || 'gemini-2.5-flash';
+
+  return `
+    <div class="agent-hero-card">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:16px">
+        <div style="max-width:760px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+            <span class="aab-badge">✦ Autonomous Gemini AI Agent · Live (${esc(modelName)})</span>
+            <span class="type-pill">Admin Advisor for Pritom</span>
+            ${insights.created_at ? `<span style="font-size:12px;color:var(--mute)">Updated ${relTime(insights.created_at)}</span>` : ''}
+          </div>
+          <h2 style="margin:0 0 8px;font-size:21px;font-weight:800;color:var(--ink)">
+            Pritom's Vault AI Agent &amp; Repository Upgrade Advisor
+          </h2>
+          <p style="margin:0;font-size:14px;color:var(--ink-2);line-height:1.6">
+            ${esc(insights.summary || 'Your Gemini AI Agent is actively monitoring every shared reel, video, prompt, and tool — identifying or creating categories automatically, writing clean titles & descriptions, learning your preferences, and advising what to upgrade next.')}
+          </p>
+        </div>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn" id="btn-agent-reanalyze-all">↻ Re-Analyze All Items</button>
+          <button type="button" class="btn btn-primary" id="btn-agent-refresh-insights">✦ Ask Agent for Fresh Upgrade Ideas</button>
+        </div>
+      </div>
+
+      <div class="agent-cap-grid">
+        <div class="agent-cap-box">
+          <div class="agent-cap-title">1. Dynamic Category Creation</div>
+          <div class="agent-cap-desc">Identifies the best category or automatically creates a brand-new category whenever novel content is shared.</div>
+        </div>
+        <div class="agent-cap-box">
+          <div class="agent-cap-title">2. Perfect Title &amp; Description</div>
+          <div class="agent-cap-desc">Generates accurate English titles, 1-2 sentence summaries, and clear "How to use it" guides with zero truncation.</div>
+        </div>
+        <div class="agent-cap-box">
+          <div class="agent-cap-title">3. User Preference Learning</div>
+          <div class="agent-cap-desc">Learns from your category edits, title refinements, star-marked favorites, and shared workflows.</div>
+        </div>
+        <div class="agent-cap-box">
+          <div class="agent-cap-title">4. Proactive Repository Upgrades</div>
+          <div class="agent-cap-desc">Periodically analyzes the Vault and tells Pritom what features, categories, or workflows we should upgrade next.</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px;margin-top:18px">
+      <div class="lib-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <h3 style="margin:0;font-size:17px;font-weight:700">🧠 Learned Preferences (Pritom &amp; Team)</h3>
+          <span class="cat-badge">Memory Active</span>
+        </div>
+        <p style="margin:0;font-size:13px;color:var(--mute)">
+          Every time you edit a title/category, star-mark content, or share a workflow, the Agent updates its learned rules:
+        </p>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-top:6px">
+          ${learned.map((pref, i) => `
+            <div class="info-box" style="display:flex;gap:10px;align-items:flex-start;padding:11px 14px">
+              <span style="color:var(--accent);font-weight:800;font-family:var(--font-mono)">0${i + 1}</span>
+              <span style="font-size:13.5px;color:var(--ink);line-height:1.5">${esc(pref)}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <div class="lib-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <h3 style="margin:0;font-size:17px;font-weight:700">🏷️ Active &amp; Agent-Created Categories (${allCats.length})</h3>
+          <span class="type-pill">Auto-Expanding</span>
+        </div>
+        <p style="margin:0;font-size:13px;color:var(--mute)">
+          If shared content does not fit an existing category, the Gemini Agent invents and saves a new category automatically:
+        </p>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px">
+          ${allCats.map(cat => {
+            const isCustom = customCats.some(x => x.name.toLowerCase() === cat.toLowerCase()) || !['AI Tools', 'Video Editing', 'Copywriting', 'Design', 'Marketing', 'Automation', 'Social Media', 'Coding', 'Business'].includes(cat);
+            return `
+              <button type="button" class="chip cat-chip" data-agent-filter-cat="${esc(cat)}" style="${isCustom ? 'border-color:var(--accent);color:var(--accent)' : ''}">
+                ${isCustom ? '✦ ' : ''}${esc(cat)}
+              </button>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:22px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <div>
+          <h3 style="margin:0;font-size:18px;font-weight:800">🚀 What We Should Upgrade Next in the Repository (For Pritom)</h3>
+          <p style="margin:3px 0 0;font-size:13px;color:var(--mute)">Proactive upgrade recommendations generated by Gemini based on your repository contents and team activity.</p>
+        </div>
+      </div>
+
+      <div class="vault-grid">
+        ${recs.map(r => `
+          <div class="lib-card" style="border-color:rgba(16,185,129,0.28)">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+              <span class="cat-badge">${esc(r.category || 'Repository Upgrade')}</span>
+              <span style="font-size:11.5px;color:var(--accent);font-weight:700">✦ Agent Recommendation</span>
+            </div>
+            <h4 style="margin:4px 0 0;font-size:16px;font-weight:700;color:var(--ink);line-height:1.38">${esc(r.title)}</h4>
+            <p style="margin:0;font-size:13.5px;color:var(--ink-2);line-height:1.55">
+              <strong style="color:var(--ink)">Why it matters:</strong> ${esc(r.why)}
+            </p>
+            <div class="info-box" style="margin-top:auto;border-color:rgba(16,185,129,0.22);background:var(--accent-soft)">
+              <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:var(--accent);margin-bottom:3px">Recommended Next Step</div>
+              <div style="font-size:13px;color:var(--ink);line-height:1.5">${esc(r.action)}</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
   `;
 }
 
@@ -1160,10 +1318,11 @@ function renderModal() {
                   <input name="title" value="${esc(item.title)}">
                 </div>
                 <div class="field">
-                  <label>Category</label>
-                  <select name="category">
-                    ${CATEGORIES.map(c => `<option value="${esc(c)}" ${item.category === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
-                  </select>
+                  <label>Category (Select existing or type a new category — Gemini Agent learns from your choice)</label>
+                  <input name="category" list="vault-category-list" value="${esc(item.category)}" placeholder="Select or type a new category…">
+                  <datalist id="vault-category-list">
+                    ${getActiveCategories().map(c => `<option value="${esc(c)}"></option>`).join('')}
+                  </datalist>
                 </div>
                 <div class="field">
                   <label>Small, Accurate Description</label>
@@ -1176,7 +1335,7 @@ function renderModal() {
                 <div style="display:flex;justify-content:space-between;margin-top:14px">
                   <button type="button" class="btn btn-danger" id="btn-delete-item">Delete Item</button>
                   <div style="display:flex;gap:8px">
-                    <button type="button" class="btn" id="btn-reanalyze">↻ Auto-Generate Title &amp; Description</button>
+                    <button type="button" class="btn" id="btn-reanalyze">↻ Ask Gemini Agent to Regenerate</button>
                     <button type="submit" class="btn btn-primary">Save Changes</button>
                   </div>
                 </div>
@@ -1352,7 +1511,7 @@ function renderSearchSuggestions(rawQuery = '') {
     : ['Claude', 'Motion Graphics', 'Documentary', 'AI Tools', 'YouTube Automation', 'AI Agent', 'GitHub Repository', 'Google Doc Prompt', '3D Animation', 'Agent Reach', 'YouTube Agent Skill'];
 
   const matchedKeywords = baseKeywords.filter(k => !q || k.toLowerCase().includes(q)).slice(0, 8);
-  const matchedCats = CATEGORIES.filter(c => c !== 'Other' && (!q || c.toLowerCase().includes(q))).slice(0, 4);
+  const matchedCats = getActiveCategories().filter(c => c !== 'Other' && (!q || c.toLowerCase().includes(q))).slice(0, 4);
   const allItems = state.suggestionsData?.items || state.items || [];
   const matchedItems = allItems
     .filter(it => !q || `${it.title || ''} ${it.category || ''} ${it.platform || ''}`.toLowerCase().includes(q))
@@ -1453,12 +1612,14 @@ function bindShellEvents() {
   app.querySelectorAll('.top-header [data-view]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const v = btn.dataset.view;
-      if (v === 'team' && state.user?.role !== 'admin') return;
+      if ((v === 'team' || v === 'agent') && state.user?.role !== 'admin') return;
       state.view = v;
       if (v === 'resources') {
         state.resources = (await api('/api/library/resources')).resources || [];
       } else if (v === 'profile') {
         state.profileItems = (await api('/api/items?fav=1')).items || [];
+      } else if (v === 'agent') {
+        state.agentData = await api('/api/agent/insights');
       } else if (v === 'team') {
         state.team = await api('/api/team');
       }
@@ -1702,6 +1863,54 @@ function bindMainEvents() {
       e.stopPropagation();
       copyText(btn.dataset.copyText);
     });
+  });
+
+  main.querySelectorAll('[data-open-agent-view]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      state.view = 'agent';
+      state.agentData = await api('/api/agent/insights');
+      renderApp();
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    });
+  });
+
+  main.querySelectorAll('[data-agent-filter-cat]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.filters.category = btn.dataset.agentFilterCat;
+      state.view = 'vault';
+      loadItems();
+    });
+  });
+
+  main.querySelector('#btn-agent-refresh-insights')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = '✦ Asking Gemini Agent…';
+    try {
+      state.agentData = await api('/api/agent/insights/refresh', { method: 'POST' });
+      state.stats = await api('/api/stats');
+      toast('✓ Gemini Agent generated fresh repository upgrade recommendations!');
+      renderApp();
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = '✦ Ask Agent for Fresh Upgrade Ideas';
+      toast(err.message, true);
+    }
+  });
+
+  main.querySelector('#btn-agent-reanalyze-all')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = '↻ Re-Analyzing…';
+    try {
+      const res = await api('/api/agent/reanalyze-all', { method: 'POST' });
+      toast(`✓ Gemini Agent queued ${res.count} items for category & description analysis!`);
+      await loadAllData();
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = '↻ Re-Analyze All Items';
+      toast(err.message, true);
+    }
   });
 }
 

@@ -40,7 +40,7 @@ export const config = {
   publicDir: path.join(ROOT, 'public'),
   appName: process.env.APP_NAME || 'BMDGL Content Vault',
   geminiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '',
-  geminiModel: process.env.GEMINI_MODEL || 'gemini-flash-latest',
+  geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
   ytdlpBin,
   ffmpegBin,
   ytdlpCookies: process.env.YTDLP_COOKIES || '',

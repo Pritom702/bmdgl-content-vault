@@ -130,7 +130,61 @@ CREATE TABLE IF NOT EXISTS password_reset_requests (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   resolved_at TEXT
 );
+CREATE TABLE IF NOT EXISTS categories (
+  name TEXT PRIMARY KEY COLLATE NOCASE,
+  created_by TEXT NOT NULL DEFAULT 'system',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS preference_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  detail TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS agent_insights (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  summary TEXT NOT NULL,
+  learned_preferences_json TEXT NOT NULL DEFAULT '[]',
+  recommendations_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
+
+export function ensureCategory(rawName, createdBy = 'agent') {
+  const clean = String(rawName || '').replace(/\s+/g, ' ').trim().slice(0, 42);
+  if (!clean || clean.length < 2) return 'Other';
+  const existing = db.prepare('SELECT name FROM categories WHERE name = ? COLLATE NOCASE').get(clean);
+  if (existing) return existing.name;
+  db.prepare('INSERT OR IGNORE INTO categories(name, created_by) VALUES (?, ?)').run(clean, createdBy);
+  return clean;
+}
+
+export function getAllCategories(baseCategories = []) {
+  for (const c of baseCategories) {
+    if (c && c !== 'Other') ensureCategory(c, 'system');
+  }
+  const itemCats = db.prepare("SELECT DISTINCT category FROM items WHERE category IS NOT NULL AND category != '' AND category != 'Other'").all();
+  for (const r of itemCats) ensureCategory(r.category, 'agent');
+  const rows = db.prepare('SELECT name, created_by, created_at FROM categories ORDER BY CASE WHEN created_by = \'agent\' THEN 0 ELSE 1 END, created_at DESC').all();
+  const names = rows.map(r => r.name).filter(n => n.toLowerCase() !== 'other');
+  const ordered = [];
+  for (const b of baseCategories) {
+    const match = names.find(n => n.toLowerCase() === b.toLowerCase());
+    if (match && !ordered.includes(match)) ordered.push(match);
+  }
+  for (const n of names) {
+    if (!ordered.includes(n)) ordered.push(n);
+  }
+  ordered.push('Other');
+  return ordered;
+}
+
+export function logPreference(userId, action, detail) {
+  try {
+    db.prepare('INSERT INTO preference_logs(user_id, action, detail) VALUES (?, ?, ?)').run(userId || null, String(action), String(detail).slice(0, 1000));
+  } catch { /* ignore */ }
+}
 
 export function getSetting(key, fallback = null) {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);

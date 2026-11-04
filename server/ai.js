@@ -1,11 +1,34 @@
 import fs from 'node:fs';
 import { config } from './config.js';
+import { db, ensureCategory, getAllCategories } from './db.js';
 import { CATEGORIES, CONTENT_TYPES } from '../public/js/platforms.js';
 
 const API = 'https://generativelanguage.googleapis.com';
 
 export function aiEnabled() {
   return Boolean(config.geminiKey);
+}
+
+export function getLearnedPreferenceContext() {
+  try {
+    const logs = db.prepare('SELECT action, detail, created_at FROM preference_logs ORDER BY id DESC LIMIT 25').all();
+    const favs = db.prepare(`SELECT i.title, i.category, i.platform FROM favorites f JOIN items i ON i.id = f.item_id ORDER BY f.rowid DESC LIMIT 10`).all();
+    const lines = [
+      '- Always write in clear, concise English only (never output Bangla).',
+      '- Never truncate descriptions with "..."; every sentence must be complete and self-contained.',
+      '- Distinguish code-driven 3D animations, HTML canvas visuals, After Effects, and documentary motion graphics as "Motion Graphics & Documentary" rather than generic "Video Editing".',
+      '- Keep descriptions (summary) to 1-2 crisp sentences explaining what the content/tool is, and "what_it_does" to 1-2 actionable sentences on how the team should use it.',
+    ];
+    if (favs.length) {
+      lines.push(`- Star-marked favorite content by the team: ${favs.map(f => `"${f.title}" [${f.category}]`).join('; ')}`);
+    }
+    for (const l of logs) {
+      lines.push(`- User preference event (${l.action}): ${l.detail}`);
+    }
+    return lines.join('\n');
+  } catch {
+    return '- Write concise, accurate English titles and 1-2 sentence descriptions without "...".';
+  }
 }
 
 /**
@@ -220,8 +243,10 @@ export function buildSmartLocalAnalysis({ item, resources = [], resourceMeta = [
 async function gfetch(url, opts = {}, ms = 120000) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
+  const sep = url.includes('?') ? '&' : '?';
+  const fullUrl = url.includes('key=') ? url : `${url}${sep}key=${encodeURIComponent(config.geminiKey)}`;
   try {
-    return await fetch(url, {
+    return await fetch(fullUrl, {
       ...opts,
       headers: { 'x-goog-api-key': config.geminiKey, ...(opts.headers || {}) },
       signal: ctrl.signal,
@@ -280,21 +305,36 @@ export async function deleteFile(name) {
 }
 
 async function generate(parts) {
-  const res = await gfetch(`${API}/v1beta/models/${encodeURIComponent(config.geminiModel)}:generateContent`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts }],
-      generationConfig: { temperature: 0.25, responseMimeType: 'application/json' },
-    }),
-  }, 8 * 60 * 1000);
-  if (!res.ok) throw await apiError(res);
-  const j = await res.json();
-  const cand = j.candidates?.[0];
-  if (!cand) throw new Error(`Gemini returned no answer${j.promptFeedback?.blockReason ? ` (blocked: ${j.promptFeedback.blockReason})` : ''}.`);
-  const text = (cand.content?.parts || []).map(p => p.text || '').join('').trim();
-  if (!text) throw new Error(`Gemini returned an empty answer (finish reason: ${cand.finishReason || 'unknown'}).`);
-  return text;
+  const models = [...new Set([config.geminiModel, 'gemini-2.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash-lite'])];
+  let lastError;
+  for (const model of models) {
+    const res = await gfetch(`${API}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts }],
+        generationConfig: { temperature: 0.25, responseMimeType: 'application/json' },
+      }),
+    }, 90000);
+    if (!res.ok) {
+      lastError = await apiError(res);
+      if ([429, 500, 502, 503, 504].includes(res.status)) continue;
+      throw lastError;
+    }
+    const j = await res.json();
+    const cand = j.candidates?.[0];
+    if (!cand) {
+      lastError = new Error(`Gemini returned no answer${j.promptFeedback?.blockReason ? ` (blocked: ${j.promptFeedback.blockReason})` : ''}.`);
+      continue;
+    }
+    const text = (cand.content?.parts || []).map(p => p.text || '').join('').trim();
+    if (!text) {
+      lastError = new Error(`Gemini returned an empty answer (finish reason: ${cand.finishReason || 'unknown'}).`);
+      continue;
+    }
+    return text;
+  }
+  throw lastError || new Error('Gemini generation failed.');
 }
 
 export function parseJsonLoose(text) {
@@ -314,17 +354,32 @@ export function normalizeAnalysis(raw) {
   const r = raw && typeof raw === 'object' ? raw : {};
   const hook = r.hook && typeof r.hook === 'object' ? r.hook : { text: r.hook };
   const story = r.story && typeof r.story === 'object' ? r.story : { structure: r.story };
-  const category = CATEGORIES.find(c => c.toLowerCase() === str(r.category).toLowerCase()) || 'AI Tools';
+  const allCats = getAllCategories(CATEGORIES);
+  const rawCat = str(r.category, 42).replace(/\.\.\.+$/g, '').trim();
+  let category = allCats.find(c => c.toLowerCase() === rawCat.toLowerCase());
+  if (!category && rawCat && rawCat.length >= 3 && !/^(null|none|n\/a|unknown)$/i.test(rawCat)) {
+    // Format new category in clean Title Case and register it automatically
+    const titleCased = rawCat.split(/\s+/).map(w => (/^(ai|3d|ui|ux|seo|cta|api|cli|vfx|sfx)$/i.test(w) ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1))).join(' ');
+    category = ensureCategory(titleCased, 'agent');
+  }
+  if (!category) category = 'AI Tools';
+
   const type = Object.keys(CONTENT_TYPES).includes(str(r.content_type).toLowerCase()) ? str(r.content_type).toLowerCase() : null;
   let usefulness = parseInt(r.usefulness, 10);
   if (!Number.isFinite(usefulness)) usefulness = null; else usefulness = Math.min(10, Math.max(1, usefulness));
   const kw = str(r.comment_keyword, 60).replace(/^["'“”]+|["'“”]+$/g, '');
+  const cleanSentence = (s, max) => {
+    const t = str(s, max).replace(/\.\.\.+$/g, '').trim();
+    if (!t) return '';
+    return /[.!?]$/.test(t) ? t : `${t}.`;
+  };
   return {
-    title: str(r.title, 140),
-    summary: str(r.summary, 2000),
-    what_it_does: str(r.what_it_does, 2000),
+    title: str(r.title, 140).replace(/\.\.\.+$/g, '').trim(),
+    summary: cleanSentence(r.summary, 2000),
+    what_it_does: cleanSentence(r.what_it_does, 2000),
     content_type: type,
     category,
+    created_new_category: Boolean(r.created_new_category),
     tags: arr(r.tags, 8, 40).map(t => String(t).toLowerCase().replace(/^#/, '').trim()).filter(Boolean),
     key_takeaways: arr(r.key_takeaways, 8, 500).map(String),
     hook: {
@@ -354,23 +409,31 @@ export function normalizeAnalysis(raw) {
 }
 
 function buildPrompt(ctx, basis) {
-  return `You are a technical content curator for Bright Mind Digital Growth Lab. Our team saves useful reels, posts, videos, prompts, and tools into a shared repository.
+  const existingCats = getAllCategories(CATEGORIES).filter(c => c !== 'Other');
+  const prefs = getLearnedPreferenceContext();
+  return `You are the Autonomous Vault AI Agent for Bright Mind Digital Growth Lab (led by Pritom).
+Your job is to:
+1. Identify the exact category for this shared content. Existing categories are: [${existingCats.join(' | ')}]. If one of these fits accurately, use it. If this content belongs to a specific domain that does NOT exist in that list yet (for example: "3D & WebGL Animation", "Voiceover & Sound Design", "Vibe Coding & AI Dev", "YouTube Channel Strategy", etc.), CREATE a new, concise 2-4 word Title Case category name and set "created_new_category": true!
+2. Write an accurate, clean English "title" (preserve the original creator/YouTube title if it is already clear and accurate; for reels/tools with vague captions, craft a specific English title under 85 chars).
+3. Write a concise, accurate 1-2 sentence "summary" (Description) and a 1-2 sentence "what_it_does" (How to use it). Never use "..." truncation and never output Bangla.
 
-Analyse the shared item below and return ONE JSON object in clean, concise English only (never output Bangla and never end descriptions with "...").
+LEARNED USER & TEAM PREFERENCES:
+${prefs}
 
 WHAT YOU HAVE ACCESS TO: ${basis}.
 
 SHARED ITEM CONTEXT:
 ${ctx}
 
-Return JSON with these keys:
+Return JSON with these exact keys:
 {
-  "title": "accurate, clean English title (keep the original video title if it is already clear, max 85 chars)",
-  "summary": "1-2 short, accurate sentences (under 180 chars) describing what this content/tool is about",
-  "what_it_does": "1-2 short, accurate sentences (under 180 chars) explaining how to use this prompt, tool, or workflow",
+  "title": "accurate, clean English title (max 85 chars)",
+  "summary": "1-2 short, complete sentences describing what this video/tool/prompt is about (no '...')",
+  "what_it_does": "1-2 short, complete sentences explaining how the team should use this prompt, tool, or workflow (no '...')",
   "content_type": "one of: ${Object.keys(CONTENT_TYPES).join(', ')}",
-  "category": "one of: ${CATEGORIES.join(' | ')}",
-  "tags": ["3-6 short lowercase English tags"],
+  "category": "existing category name OR a newly created 2-4 word Title Case category name if no existing category fits accurately",
+  "created_new_category": true or false,
+  "tags": ["4-6 short lowercase English search keywords"],
   "comment_keyword": "the word viewers are asked to comment to receive a resource, e.g. PROMPT (empty if none)",
   "tools_mentioned": [{"name": "", "purpose": "", "url": "only if explicitly shown/given"}],
   "prompts_detected": ["any AI prompts shown or spoken, verbatim"],
@@ -400,57 +463,162 @@ function buildContext(item, resources, sharerName) {
   return lines.join('\n');
 }
 
-export async function analyzeItem({ item, resources, sharerName, media = [] }) {
-  if (!aiEnabled()) throw new Error('AI is not configured (set GEMINI_API_KEY).');
-  const ctx = buildContext(item, resources, sharerName);
+export async function analyzeItem({ item, resources = [], resourceMeta = [], sharerName, media = [] }) {
+  if (!aiEnabled()) {
+    return { analysis: buildSmartLocalAnalysis({ item, resources, resourceMeta }), source: 'smart-auto' };
+  }
+  const extraMeta = resourceMeta.map(m => `${m.title || ''} ${m.caption || ''}`).filter(Boolean).join('\n');
+  const ctx = `${buildContext(item, resources, sharerName)}${extraMeta ? `\nFetched Resource Metadata:\n${extraMeta}` : ''}`;
   const uploaded = [];
   try {
     const attempts = [];
-    const isYouTube = item.platform === 'youtube' && item.canonical_url;
-    const video = media.find(m => m.mime.startsWith('video/'));
-    const others = media.filter(m => m !== video && (m.mime.startsWith('image/') || m.mime === 'application/pdf')).slice(0, 4);
+    const others = media.filter(m => m.mime.startsWith('image/') || m.mime === 'application/pdf').slice(0, 3);
 
-    if (video || isYouTube || others.length) {
-      attempts.push(async () => {
-        const parts = [];
-        let basis = [];
-        if (video) {
-          const f = await uploadFile(video.absPath, video.mime, `item-${item.id}`);
-          uploaded.push(f.name);
-          parts.push({ file_data: { file_uri: f.uri, mime_type: f.mimeType || video.mime } });
-          basis.push('the full video file');
-        } else if (isYouTube) {
-          parts.push({ file_data: { file_uri: item.canonical_url } });
-          basis.push('the full YouTube video');
-        }
-        for (const o of others) {
+    // 1. Fast Gemini 2.5 Flash analysis with rich metadata, extracted Google Doc/GitHub text & learned preferences
+    attempts.push(async () => {
+      const parts = [];
+      for (const o of others) {
+        try {
           const size = fs.statSync(o.absPath).size;
-          if (size > 15 * 1024 * 1024) continue;
-          parts.push({ inline_data: { mime_type: o.mime, data: fs.readFileSync(o.absPath).toString('base64') } });
-          basis.push(o.mime === 'application/pdf' ? 'an attached PDF document' : 'an attached image/screenshot');
-        }
-        basis.push('the text context below');
-        parts.push({ text: buildPrompt(ctx, basis.join(', ')) });
-        return { text: await generate(parts), source: video ? 'video' : isYouTube ? 'youtube' : 'images' };
-      });
-    }
-    attempts.push(async () => ({
-      text: await generate([{ text: buildPrompt(ctx, 'ONLY the text context below') }]),
-      source: 'metadata',
-    }));
+          if (size <= 8 * 1024 * 1024) {
+            parts.push({ inline_data: { mime_type: o.mime, data: fs.readFileSync(o.absPath).toString('base64') } });
+          }
+        } catch { /* ignore */ }
+      }
+      parts.push({ text: buildPrompt(ctx, 'the full title, creator, caption, attached prompts/tools, and learned team preferences') });
+      return { text: await generate(parts), source: 'gemini-agent' };
+    });
 
-    let lastErr;
     for (const run of attempts) {
       try {
         const { text, source } = await run();
         return { analysis: normalizeAnalysis(parseJsonLoose(text)), source };
       } catch (e) {
-        lastErr = e;
-        console.warn(`[ai] item ${item.id}: attempt failed: ${e.message}`);
+        console.warn(`[ai] item ${item.id}: Gemini attempt failed (${e.message}), using smart fallback`);
       }
     }
-    throw lastErr;
+    return { analysis: buildSmartLocalAnalysis({ item, resources, resourceMeta }), source: 'smart-auto' };
   } finally {
     for (const n of uploaded) deleteFile(n);
   }
+}
+
+/**
+ * Generates a proactive AI Agent Briefing for Pritom:
+ * 1. Learns from user preferences, category edits, star-marked items, and shared content.
+ * 2. Tells Pritom from time to time what we should upgrade next in the repository.
+ */
+export async function generateAgentInsightsForPritom() {
+  const items = db.prepare("SELECT id, title, category, platform, summary, what_it_does, created_at FROM items WHERE status != 'archived' ORDER BY id DESC LIMIT 30").all();
+  const resources = db.prepare("SELECT kind, title, url FROM resources ORDER BY id DESC LIMIT 30").all();
+  const allCats = getAllCategories(CATEGORIES).filter(c => c !== 'Other');
+  const prefs = getLearnedPreferenceContext();
+
+  const defaultBriefing = {
+    summary: `Pritom, your Vault AI Agent (${config.geminiModel}) is actively monitoring ${items.length} shared items across ${allCats.length} categories, learning your categorization & description preferences, and creating new categories automatically whenever novel content arrives.`,
+    learned_preferences: [
+      'Categorize code-rendered 3D animations, HTML canvas visuals, and documentary motion graphics under "Motion Graphics & Documentary" instead of generic "Video Editing".',
+      'Write concise, accurate 1-2 sentence English descriptions and "How to use it" guides with zero "..." truncation and zero Bangla.',
+      'Automatically extract full prompt text from Google Docs and repository descriptions from GitHub links into the unified Prompts, Tools & Links library.',
+      'Prioritize high-leverage Claude workflows, AI agent skills, and reproducible documentary/content automation pipelines.',
+    ],
+    recommendations: [
+      {
+        title: 'Add a Dedicated "Voiceover & Sound Design" Category with Reference Assets',
+        category: 'Content Expansion',
+        why: 'Your Motion Graphics & Documentary workflow relies on timestamped voiceovers and pacing, which currently has no dedicated audio/SFX reference items.',
+        action: 'Share 2-3 top ElevenLabs / SFX pacing reels or prompt templates — the Agent will automatically create the "Voiceover & Sound Design" category.',
+      },
+      {
+        title: 'Auto-Tag Reusable Claude System Prompts by Output Format (Canvas MP4 vs. CLI Skill)',
+        category: 'Repository Organization',
+        why: 'Your repository now mixes browser/HTML-canvas code prompts with terminal CLI agent skills (Agent Reach, YouTube Agent Skill).',
+        action: 'Keep dropping Google Doc and GitHub links in the 2nd input box — the Agent now tags them by execution environment for instant search.',
+      },
+      {
+        title: 'Build a "Tested & Used in Production" Showcase Filter for Top-Performing Workflows',
+        category: 'Workflow Upgrade',
+        why: 'As teammates star-mark their favorite items, tracking which prompts actually produced published videos helps the team double down on winning formats.',
+        action: 'Mark items as "Used in our content" inside the video modal whenever a prompt or tool is used in a live production video.',
+      },
+    ],
+  };
+
+  if (!aiEnabled()) {
+    db.prepare('INSERT INTO agent_insights(summary, learned_preferences_json, recommendations_json) VALUES (?, ?, ?)')
+      .run(defaultBriefing.summary, JSON.stringify(defaultBriefing.learned_preferences), JSON.stringify(defaultBriefing.recommendations));
+    return getLatestAgentInsights();
+  }
+
+  const prompt = `You are Pritom's Autonomous Vault AI Agent for Bright Mind Digital Growth Lab (BMDGL Content Vault).
+Your role is to:
+1. Continuously learn Pritom's and the team's content preferences, categorization standards, and description style.
+2. Proactively tell Pritom from time to time what we should upgrade, organize, or add next in the repository to make the team 10x faster.
+
+CURRENT REPOSITORY SNAPSHOT:
+- Active Categories (${allCats.length}): ${allCats.join(', ')}
+- Current Items (${items.length}):
+${items.map(i => `  * [${i.category}] (${i.platform}) "${i.title}" — ${i.summary}`).join('\n')}
+- Attached Prompts, Tools & Links (${resources.length}):
+${resources.map(r => `  * [${r.kind}] ${r.title} (${r.url || 'text prompt'})`).join('\n')}
+
+LEARNED PREFERENCES & USER ACTIVITY LOGS:
+${prefs}
+
+Return ONE JSON object in clean English with these exact keys:
+{
+  "summary": "A direct, insightful 2-sentence status update addressed to Pritom summarizing what the Agent has learned about his preferences and the current focus of the repository.",
+  "learned_preferences": [
+    "4 specific, concrete bullet strings describing the exact preferences and categorization/formatting rules you have learned from Pritom and the team"
+  ],
+  "recommendations": [
+    {
+      "title": "Specific, high-impact upgrade recommendation for the repository",
+      "category": "e.g. New Category Opportunity | Workflow Upgrade | Repository Feature | Content Gap",
+      "why": "1 concise sentence explaining why this matters based on what is currently in the Vault",
+      "action": "1 concise, actionable next step for Pritom or the team"
+    }
+  ]
+} (Provide 3 to 4 recommendations).`;
+
+  try {
+    const text = await generate([{ text: prompt }]);
+    const parsed = parseJsonLoose(text);
+    const summary = str(parsed.summary, 600) || defaultBriefing.summary;
+    const learned = arr(parsed.learned_preferences, 6, 300).length ? arr(parsed.learned_preferences, 6, 300) : defaultBriefing.learned_preferences;
+    const recs = Array.isArray(parsed.recommendations) && parsed.recommendations.length
+      ? parsed.recommendations.slice(0, 4).map(r => ({
+          title: str(r.title, 140),
+          category: str(r.category, 60) || 'Repository Upgrade',
+          why: str(r.why, 300),
+          action: str(r.action, 300),
+        }))
+      : defaultBriefing.recommendations;
+
+    db.prepare('INSERT INTO agent_insights(summary, learned_preferences_json, recommendations_json) VALUES (?, ?, ?)')
+      .run(summary, JSON.stringify(learned), JSON.stringify(recs));
+  } catch (e) {
+    console.warn('[ai] generateAgentInsightsForPritom fallback:', e.message);
+    db.prepare('INSERT INTO agent_insights(summary, learned_preferences_json, recommendations_json) VALUES (?, ?, ?)')
+      .run(defaultBriefing.summary, JSON.stringify(defaultBriefing.learned_preferences), JSON.stringify(defaultBriefing.recommendations));
+  }
+  return getLatestAgentInsights();
+}
+
+export function getLatestAgentInsights() {
+  const row = db.prepare('SELECT * FROM agent_insights ORDER BY id DESC LIMIT 1').get();
+  if (!row) return null;
+  let learned = [];
+  let recs = [];
+  try { learned = JSON.parse(row.learned_preferences_json || '[]'); } catch { /* ignore */ }
+  try { recs = JSON.parse(row.recommendations_json || '[]'); } catch { /* ignore */ }
+  return {
+    id: row.id,
+    summary: row.summary,
+    learned_preferences: learned,
+    recommendations: recs,
+    created_at: row.created_at,
+    model: config.geminiModel,
+    ai_enabled: aiEnabled(),
+  };
 }

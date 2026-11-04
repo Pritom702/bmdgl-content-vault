@@ -4,14 +4,14 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
-import { db, tx } from './db.js';
+import { db, tx, ensureCategory, getAllCategories, logPreference } from './db.js';
 import {
   loadUser, requireUser, requireAdmin, createUser, createSession, destroySession, verifyPassword, hashPassword,
   publicUser, userCount, inviteCode, newInviteCode, rateLimit, cleanupSessions,
 } from './auth.js';
 import { analyzeUrl, extractUrl, CATEGORIES, STATUSES, RESOURCE_STATUSES, RESOURCE_KINDS, CONTENT_TYPES, PLATFORMS } from '../public/js/platforms.js';
 import { enqueue, resumeInterrupted, queueSize } from './jobs.js';
-import { aiEnabled } from './ai.js';
+import { aiEnabled, generateAgentInsightsForPritom, getLatestAgentInsights } from './ai.js';
 import { removeDataFile, mimeFor } from './media.js';
 
 export const app = express();
@@ -272,7 +272,7 @@ for (const dir of ['thumbs', 'media', 'uploads']) {
 app.use('/api', requireUser);
 
 app.get('/api/meta', (_req, res) => {
-  res.json({ categories: CATEGORIES, statuses: STATUSES, resourceStatuses: RESOURCE_STATUSES, resourceKinds: RESOURCE_KINDS, contentTypes: CONTENT_TYPES, platforms: PLATFORMS });
+  res.json({ categories: getAllCategories(CATEGORIES), statuses: STATUSES, resourceStatuses: RESOURCE_STATUSES, resourceKinds: RESOURCE_KINDS, contentTypes: CONTENT_TYPES, platforms: PLATFORMS });
 });
 
 app.post('/api/me/password', (req, res) => {
@@ -427,7 +427,7 @@ app.post('/api/items', upload.array('files', 10), (req, res) => {
     if (!info && !(req.files || []).length && !resources.length && !s(d.notes)) {
       throw bad('Add a link, upload a file, or add a prompt/tool so there is something to save.');
     }
-    const category = CATEGORIES.includes(d.category) ? d.category : null;
+    const category = d.category && d.category !== 'auto' ? ensureCategory(s(d.category, 42), 'user') : null;
     const status = Object.keys(STATUSES).includes(d.status) ? d.status : 'new';
     const commentKeyword = s(d.comment_keyword, 60);
     let resourceStatus = Object.keys(RESOURCE_STATUSES).includes(d.resource_status) ? d.resource_status : 'none';
@@ -469,6 +469,12 @@ app.post('/api/items', upload.array('files', 10), (req, res) => {
         .run(s(fallbackTitle, 200), initialSummary, initialWhat, itemId);
       return itemId;
     });
+    logPreference(req.user.id, 'share_item', {
+      item_id: id,
+      platform: info ? info.platform : 'upload',
+      category: category || 'auto',
+      has_resources: resources.length > 0,
+    });
     enqueue(id, { meta: Boolean(info), archive: Boolean(info), ai: true });
     res.status(201).json({ item: itemDetail(id, req.user.id) });
   } catch (e) {
@@ -485,8 +491,10 @@ app.patch('/api/items/:id', (req, res) => {
   if ('notes' in d) upd.notes = s(d.notes, 5000);
   if ('category' in d) {
     if (d.category === 'auto') upd.category_locked = 0;
-    else if (CATEGORIES.includes(d.category)) { upd.category = d.category; upd.category_locked = 1; }
-    else throw bad('Unknown category.');
+    else if (s(d.category, 42)) {
+      upd.category = ensureCategory(s(d.category, 42), 'user');
+      upd.category_locked = 1;
+    } else throw bad('Category cannot be empty.');
   }
   if ('status' in d) { if (!STATUSES[d.status]) throw bad('Unknown status.'); upd.status = d.status; }
   if ('resource_status' in d) { if (!RESOURCE_STATUSES[d.resource_status]) throw bad('Unknown resource status.'); upd.resource_status = d.resource_status; }
@@ -506,6 +514,17 @@ app.patch('/api/items/:id', (req, res) => {
       for (const t of normTags(d.tags)) ins.run(item.id, t);
     }
   });
+  if ('title' in d || 'category' in d || 'summary' in d || 'what_it_does' in d) {
+    logPreference(req.user.id, 'edit_item', {
+      item_id: item.id,
+      old_title: item.title,
+      new_title: upd.title || item.title,
+      old_category: item.category,
+      new_category: upd.category || item.category,
+      summary: upd.summary || item.summary,
+      what_it_does: upd.what_it_does || item.what_it_does,
+    });
+  }
   res.json({ item: itemDetail(item.id, req.user.id) });
 });
 
@@ -544,7 +563,10 @@ app.post('/api/items/:id/favorite', (req, res) => {
   const item = getItemOr404(req.params.id);
   const exists = db.prepare('SELECT 1 FROM favorites WHERE user_id = ? AND item_id = ?').get(req.user.id, item.id);
   if (exists) db.prepare('DELETE FROM favorites WHERE user_id = ? AND item_id = ?').run(req.user.id, item.id);
-  else db.prepare('INSERT INTO favorites(user_id, item_id) VALUES (?, ?)').run(req.user.id, item.id);
+  else {
+    db.prepare('INSERT INTO favorites(user_id, item_id) VALUES (?, ?)').run(req.user.id, item.id);
+    logPreference(req.user.id, 'favorite', { item_id: item.id, title: item.title, category: item.category });
+  }
   res.json({ favorite: !exists });
 });
 
@@ -552,7 +574,10 @@ app.post('/api/items/:id/upvote', (req, res) => {
   const item = getItemOr404(req.params.id);
   const exists = db.prepare('SELECT 1 FROM upvotes WHERE user_id = ? AND item_id = ?').get(req.user.id, item.id);
   if (exists) db.prepare('DELETE FROM upvotes WHERE user_id = ? AND item_id = ?').run(req.user.id, item.id);
-  else db.prepare('INSERT INTO upvotes(user_id, item_id) VALUES (?, ?)').run(req.user.id, item.id);
+  else {
+    db.prepare('INSERT INTO upvotes(user_id, item_id) VALUES (?, ?)').run(req.user.id, item.id);
+    logPreference(req.user.id, 'upvote', { item_id: item.id, title: item.title, category: item.category });
+  }
   const n = db.prepare('SELECT COUNT(*) AS n FROM upvotes WHERE item_id = ?').get(item.id).n;
   res.json({ upvoted: !exists, upvotes: n });
 });
@@ -759,8 +784,9 @@ app.get('/api/search-suggestions', (req, res) => {
     if (it.category) keywordSet.add(it.category);
   }
 
+  const allCats = getAllCategories(CATEGORIES);
   const keywords = [...keywordSet].filter(kw => !q || kw.toLowerCase().includes(q)).slice(0, 8);
-  const matchedCategories = CATEGORIES.filter(c => c !== 'Other' && (!q || c.toLowerCase().includes(q))).slice(0, 5);
+  const matchedCategories = allCats.filter(c => c !== 'Other' && (!q || c.toLowerCase().includes(q))).slice(0, 5);
   const matchedItems = items
     .filter(it => !q || `${it.title} ${it.category} ${it.summary} ${it.platform}`.toLowerCase().includes(q))
     .slice(0, 5)
@@ -798,6 +824,8 @@ app.get('/api/stats', (req, res) => {
     pendingPasswordResets: req.user.role === 'admin'
       ? one("SELECT COUNT(*) AS n FROM password_reset_requests WHERE status = 'pending'").n
       : 0,
+    allCategories: getAllCategories(CATEGORIES),
+    agentInsights: req.user.role === 'admin' ? getLatestAgentInsights() : null,
     analyzing: queueSize(),
     byPlatform: db.prepare("SELECT platform, COUNT(*) AS n FROM items WHERE status != 'archived' GROUP BY platform ORDER BY n DESC").all(),
     byCategory: db.prepare("SELECT category, COUNT(*) AS n FROM items WHERE status != 'archived' GROUP BY category ORDER BY n DESC").all(),
@@ -895,6 +923,42 @@ app.post('/api/team/:uid/reset-password', requireAdmin, (req, res) => {
 app.delete('/api/team/reset-requests/:rid', requireAdmin, (req, res) => {
   db.prepare("UPDATE password_reset_requests SET status = 'resolved', resolved_at = datetime('now') WHERE id = ?").run(int(req.params.rid));
   res.json({ ok: true });
+});
+
+// ---------- Gemini Agent Insights & Upgrade Advisor (Admin Only — Pritom) ----------
+app.get('/api/agent/insights', requireAdmin, async (_req, res) => {
+  let insights = getLatestAgentInsights();
+  if (!insights) {
+    insights = await generateAgentInsightsForPritom();
+  }
+  const customCategories = db.prepare("SELECT name, created_by, created_at FROM categories WHERE created_by != 'system' ORDER BY created_at DESC, name ASC").all();
+  res.json({
+    insights,
+    allCategories: getAllCategories(CATEGORIES),
+    customCategories,
+    aiEnabled: aiEnabled(),
+    model: config.geminiModel,
+  });
+});
+
+app.post('/api/agent/insights/refresh', requireAdmin, async (_req, res) => {
+  const insights = await generateAgentInsightsForPritom();
+  const customCategories = db.prepare("SELECT name, created_by, created_at FROM categories WHERE created_by != 'system' ORDER BY created_at DESC, name ASC").all();
+  res.json({
+    insights,
+    allCategories: getAllCategories(CATEGORIES),
+    customCategories,
+    aiEnabled: aiEnabled(),
+    model: config.geminiModel,
+  });
+});
+
+app.post('/api/agent/reanalyze-all', requireAdmin, (_req, res) => {
+  const rows = db.prepare("SELECT id FROM items WHERE status != 'archived' ORDER BY id DESC").all();
+  for (const r of rows) {
+    enqueue(r.id, { meta: false, archive: false, ai: true });
+  }
+  res.json({ ok: true, count: rows.length });
 });
 
 // ---------- Export ----------

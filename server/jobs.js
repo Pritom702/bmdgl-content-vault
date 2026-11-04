@@ -4,7 +4,7 @@ import { config } from './config.js';
 import { analyzeUrl, isVideoPlatform } from '../public/js/platforms.js';
 import { fetchMetadata, resolveUrl } from './metadata.js';
 import { archiveVideo, saveThumbnail, thumbnailFromVideo, absData, removeDataFile } from './media.js';
-import { aiEnabled, analyzeItem, buildSmartLocalAnalysis } from './ai.js';
+import { aiEnabled, analyzeItem, buildSmartLocalAnalysis, generateAgentInsightsForPritom } from './ai.js';
 
 const queue = [];
 const queued = new Set();
@@ -163,7 +163,7 @@ async function process({ id, steps }) {
             media.push({ absPath: p, mime: a.mime });
           }
         }
-        const res = await analyzeItem({ item, resources, sharerName: sharer?.name, media });
+        const res = await analyzeItem({ item, resources, resourceMeta, sharerName: sharer?.name, media });
         analysis = res.analysis;
         source = res.source;
       } else {
@@ -194,6 +194,7 @@ async function process({ id, steps }) {
       touch(id, upd);
       const ins = db.prepare('INSERT OR IGNORE INTO item_tags(item_id, tag) VALUES (?, ?)');
       for (const t of analysis.tags) ins.run(id, t);
+      generateAgentInsightsForPritom().catch(() => {});
     } catch (e) {
       touch(id, { ai_status: 'failed', ai_error: String(e.message || e).slice(0, 500) });
     }
