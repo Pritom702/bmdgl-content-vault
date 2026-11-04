@@ -252,20 +252,31 @@ app.get('/share', (req, res) => {
 
 // ---------- Protected files (thumbnails, offline copies, uploads) ----------
 for (const dir of ['thumbs', 'media', 'uploads']) {
-  app.use(`/files/${dir}`, (req, res, next) => {
-    if (!req.user) return res.status(401).send('Please sign in.');
-    next();
-  }, express.static(path.join(config.dataDir, dir), {
-    index: false,
-    dotfiles: 'deny',
-    maxAge: '7d',
-    setHeaders: (res, filePath) => {
-      const mime = mimeFor(filePath);
-      if (!/^(video|image|audio)\//.test(mime) && mime !== 'application/pdf' && mime !== 'text/plain') {
-        res.setHeader('Content-Disposition', 'attachment');
-      }
+  const handlers = [
+    (req, res, next) => {
+      if (!req.user) return res.status(401).send('Please sign in.');
+      next();
     },
-  }));
+    express.static(path.join(config.dataDir, dir), {
+      index: false,
+      dotfiles: 'deny',
+      maxAge: '7d',
+      setHeaders: (res, filePath) => {
+        const mime = mimeFor(filePath);
+        if (!/^(video|image|audio)\//.test(mime) && mime !== 'application/pdf' && mime !== 'text/plain') {
+          res.setHeader('Content-Disposition', 'attachment');
+        }
+      },
+    }),
+  ];
+  if (config.bundledDataDir && config.bundledDataDir !== config.dataDir) {
+    handlers.push(express.static(path.join(config.bundledDataDir, dir), {
+      index: false,
+      dotfiles: 'deny',
+      maxAge: '7d',
+    }));
+  }
+  app.use(`/files/${dir}`, ...handlers);
 }
 
 // Everything below needs a signed-in user.
@@ -411,7 +422,7 @@ function readItemPayload(req) {
   return req.body || {};
 }
 
-app.post('/api/items', upload.array('files', 10), (req, res) => {
+app.post('/api/items', upload.array('files', 10), async (req, res) => {
   let d;
   try { d = readItemPayload(req); } catch (e) { cleanupUploaded(req.files); throw e; }
   try {
@@ -475,7 +486,10 @@ app.post('/api/items', upload.array('files', 10), (req, res) => {
       category: category || 'auto',
       has_resources: resources.length > 0,
     });
-    enqueue(id, { meta: Boolean(info), archive: Boolean(info), ai: true });
+    const jobPromise = enqueue(id, { meta: Boolean(info), archive: Boolean(info) && !config.isVercel, ai: true });
+    if (config.isVercel) {
+      await Promise.race([jobPromise, new Promise(r => setTimeout(r, 9000))]);
+    }
     res.status(201).json({ item: itemDetail(id, req.user.id) });
   } catch (e) {
     cleanupUploaded(req.files);
@@ -537,9 +551,12 @@ app.delete('/api/items/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/items/:id/reanalyze', (req, res) => {
+app.post('/api/items/:id/reanalyze', async (req, res) => {
   const item = getItemOr404(req.params.id);
-  enqueue(item.id, { meta: false, archive: false, ai: true });
+  const jobPromise = enqueue(item.id, { meta: false, archive: false, ai: true });
+  if (config.isVercel) {
+    await Promise.race([jobPromise, new Promise(r => setTimeout(r, 9000))]);
+  }
   res.json({ item: itemDetail(item.id, req.user.id) });
 });
 
@@ -1033,4 +1050,6 @@ export function start() {
     console.log(`  Offline video copies (yt-dlp): ${config.hasYtdlp ? 'ON' : 'OFF - install yt-dlp'}   ffmpeg: ${config.hasFfmpeg ? 'ON' : 'OFF'}\n`);
   });
 }
+
+export default app;
 

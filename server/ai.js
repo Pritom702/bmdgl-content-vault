@@ -515,7 +515,7 @@ export async function generateAgentInsightsForPritom() {
   const prefs = getLearnedPreferenceContext();
 
   const defaultBriefing = {
-    summary: `Pritom, your Vault AI Agent (${config.geminiModel}) is actively monitoring ${items.length} shared items across ${allCats.length} categories, learning your categorization & description preferences, and creating new categories automatically whenever novel content arrives.`,
+    summary: `Pritom, your Vault Agent is actively monitoring ${items.length} shared items across ${allCats.length} categories, learning your categorization & description preferences, and creating new categories automatically whenever novel content arrives.`,
     learned_preferences: [
       'Categorize code-rendered 3D animations, HTML canvas visuals, and documentary motion graphics under "Motion Graphics & Documentary" instead of generic "Video Editing".',
       'Write concise, accurate 1-2 sentence English descriptions and "How to use it" guides with zero "..." truncation and zero Bangla.',

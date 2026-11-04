@@ -20,17 +20,20 @@ const touch = (id, fields) => {
 };
 
 export function enqueue(id, steps = { meta: true, archive: true, ai: true }) {
-  if (globalThis.process.env.DISABLE_JOBS === '1') return;
+  if (globalThis.process.env.DISABLE_JOBS === '1') return Promise.resolve();
   const key = `${id}`;
   if (queued.has(key)) {
     const existing = queue.find(q => q.id === id);
     if (existing) for (const k of Object.keys(steps)) existing.steps[k] = existing.steps[k] || steps[k];
-    return;
+    return existing?.promise || Promise.resolve();
   }
   queued.add(key);
-  queue.push({ id, steps: { ...steps } });
+  let resolveDone;
+  const promise = new Promise(r => { resolveDone = r; });
+  queue.push({ id, steps: { ...steps }, promise, resolveDone });
   if (steps.ai && aiEnabled()) touch(id, { ai_status: 'pending', ai_error: null });
   pump();
+  return promise;
 }
 
 function pump() {
@@ -39,7 +42,12 @@ function pump() {
     running++;
     process(job)
       .catch(e => console.error(`[jobs] item ${job.id} failed:`, e))
-      .finally(() => { running--; queued.delete(`${job.id}`); pump(); });
+      .finally(() => {
+        running--;
+        queued.delete(`${job.id}`);
+        if (job.resolveDone) job.resolveDone();
+        pump();
+      });
   }
 }
 

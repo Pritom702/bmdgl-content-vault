@@ -6,6 +6,30 @@ import { config } from './config.js';
 fs.mkdirSync(config.dataDir, { recursive: true });
 for (const d of ['media', 'thumbs', 'uploads', 'tmp']) fs.mkdirSync(path.join(config.dataDir, d), { recursive: true });
 
+if (config.isVercel && config.bundledDataDir && config.bundledDataDir !== config.dataDir) {
+  try {
+    const srcDb = path.join(config.bundledDataDir, 'vault.db');
+    if (fs.existsSync(srcDb) && !fs.existsSync(config.dbPath)) {
+      fs.copyFileSync(srcDb, config.dbPath);
+    }
+    for (const sub of ['thumbs', 'media']) {
+      const srcSub = path.join(config.bundledDataDir, sub);
+      const dstSub = path.join(config.dataDir, sub);
+      if (fs.existsSync(srcSub)) {
+        for (const f of fs.readdirSync(srcSub)) {
+          const s = path.join(srcSub, f);
+          const d = path.join(dstSub, f);
+          if (!fs.existsSync(d) && fs.statSync(s).isFile()) {
+            fs.copyFileSync(s, d);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[db] Vercel data bootstrap warning:', e.message);
+  }
+}
+
 export const db = new DatabaseSync(config.dbPath);
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
 

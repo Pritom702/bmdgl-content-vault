@@ -1,0 +1,8 @@
+node_modules
+.env
+data/media/item-7.mp4
+data/tmp
+data/vault.db-shm
+data/vault.db-wal
+test
+

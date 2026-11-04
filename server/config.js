@@ -28,14 +28,19 @@ function hasBinary(cmd, args = ['--version']) {
   }
 }
 
-const dataDir = path.resolve(ROOT, process.env.DATA_DIR || 'data');
+const isVercel = Boolean(process.env.VERCEL);
+const dataDir = isVercel
+  ? path.resolve('/tmp', 'bmdgl-vault-data')
+  : path.resolve(ROOT, process.env.DATA_DIR || 'data');
 const ytdlpBin = process.env.YTDLP_PATH || 'yt-dlp';
 const ffmpegBin = process.env.FFMPEG_PATH || 'ffmpeg';
 
 export const config = {
+  isVercel,
   port: parseInt(process.env.PORT || '3000', 10),
   host: process.env.HOST || '0.0.0.0',
   dataDir,
+  bundledDataDir: path.resolve(ROOT, 'data'),
   dbPath: path.join(dataDir, 'vault.db'),
   publicDir: path.join(ROOT, 'public'),
   appName: process.env.APP_NAME || 'BMDGL Content Vault',
@@ -44,12 +49,12 @@ export const config = {
   ytdlpBin,
   ffmpegBin,
   ytdlpCookies: process.env.YTDLP_COOKIES || '',
-  hasYtdlp: bool(process.env.DISABLE_YTDLP, false) ? false : hasBinary(ytdlpBin),
-  hasFfmpeg: hasBinary(ffmpegBin, ['-version']),
+  hasYtdlp: isVercel ? false : (bool(process.env.DISABLE_YTDLP, false) ? false : hasBinary(ytdlpBin)),
+  hasFfmpeg: isVercel ? false : hasBinary(ffmpegBin, ['-version']),
   autoArchive: bool(process.env.AUTO_ARCHIVE, true),
   maxArchiveMB: parseInt(process.env.MAX_ARCHIVE_MB || '150', 10),
   maxUploadMB: parseInt(process.env.MAX_UPLOAD_MB || '300', 10),
-  secureCookies: bool(process.env.SECURE_COOKIES, false),
+  secureCookies: bool(process.env.SECURE_COOKIES, isVercel),
   sessionDays: 3650,
 };
 
