@@ -223,14 +223,21 @@ app.post('/api/auth/logout', (req, res) => {
 
 app.post('/api/auth/forgot-password', (req, res) => {
   const email = s(req.body.email, 200).toLowerCase();
-  const nextPw = String(req.body.newPassword || '');
   if (!rateLimit(`forgot:${req.ip}:${email}`, 15)) throw new HttpError(429, 'Too many attempts. Try again in a few minutes.');
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
-  if (!user) throw bad('No teammate account found with that email.');
-  if (nextPw.length < 6) throw bad('New password must be at least 6 characters.');
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(nextPw), user.id);
-  createSession(res, user.id);
-  res.json({ user: publicUser(user) });
+  if (!user) throw bad('No team account found with that email address.');
+  const existing = db.prepare("SELECT id FROM password_reset_requests WHERE user_id = ? AND status = 'pending'").get(user.id);
+  if (existing) {
+    db.prepare("UPDATE password_reset_requests SET created_at = datetime('now') WHERE id = ?").run(existing.id);
+  } else {
+    db.prepare("INSERT INTO password_reset_requests(user_id, status) VALUES (?, 'pending')").run(user.id);
+  }
+  res.json({
+    ok: true,
+    name: user.name,
+    email: user.email,
+    message: 'Your password reset request has been sent to Pritom. He will set a new password and provide it to you.',
+  });
 });
 
 // PWA share target: phone "Share -> BMDGL Vault" lands here.
@@ -788,6 +795,9 @@ app.get('/api/stats', (req, res) => {
     resources: allRes.length,
     favorites: one('SELECT COUNT(*) AS n FROM favorites WHERE user_id = ?', req.user.id).n,
     myShared: one("SELECT COUNT(*) AS n FROM items WHERE shared_by = ? AND status != 'archived'", req.user.id).n,
+    pendingPasswordResets: req.user.role === 'admin'
+      ? one("SELECT COUNT(*) AS n FROM password_reset_requests WHERE status = 'pending'").n
+      : 0,
     analyzing: queueSize(),
     byPlatform: db.prepare("SELECT platform, COUNT(*) AS n FROM items WHERE status != 'archived' GROUP BY platform ORDER BY n DESC").all(),
     byCategory: db.prepare("SELECT category, COUNT(*) AS n FROM items WHERE status != 'archived' GROUP BY category ORDER BY n DESC").all(),
@@ -840,7 +850,12 @@ app.get('/api/team', requireAdmin, (_req, res) => {
       (SELECT COUNT(*) FROM items i WHERE i.shared_by = u.id) AS shared,
       (SELECT COUNT(*) FROM comments c WHERE c.user_id = u.id) AS comments
     FROM users u ORDER BY u.created_at`).all();
-  res.json({ members, inviteCode: inviteCode() });
+  const resetRequests = db.prepare(`SELECT r.id, r.user_id, r.status, r.created_at, u.name, u.email
+    FROM password_reset_requests r
+    JOIN users u ON u.id = r.user_id
+    WHERE r.status = 'pending'
+    ORDER BY r.created_at DESC`).all();
+  res.json({ members, inviteCode: inviteCode(), resetRequests });
 });
 
 app.post('/api/team/invite/regenerate', requireAdmin, (_req, res) => {
@@ -868,10 +883,18 @@ app.delete('/api/team/:uid', requireAdmin, (req, res) => {
 app.post('/api/team/:uid/reset-password', requireAdmin, (req, res) => {
   const u = db.prepare('SELECT * FROM users WHERE id = ?').get(int(req.params.uid));
   if (!u) throw new HttpError(404, 'User not found.');
-  const temp = crypto.randomBytes(6).toString('base64url');
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(temp), u.id);
+  const customPw = String(req.body?.newPassword || '').trim();
+  if (customPw && customPw.length < 6) throw bad('New password must be at least 6 characters.');
+  const nextPw = customPw || crypto.randomBytes(6).toString('base64url');
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(nextPw), u.id);
+  db.prepare("UPDATE password_reset_requests SET status = 'resolved', resolved_at = datetime('now') WHERE user_id = ? AND status = 'pending'").run(u.id);
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(u.id);
-  res.json({ password: temp });
+  res.json({ ok: true, password: nextPw, newPassword: nextPw, user: { id: u.id, name: u.name, email: u.email } });
+});
+
+app.delete('/api/team/reset-requests/:rid', requireAdmin, (req, res) => {
+  db.prepare("UPDATE password_reset_requests SET status = 'resolved', resolved_at = datetime('now') WHERE id = ?").run(int(req.params.rid));
+  res.json({ ok: true });
 });
 
 // ---------- Export ----------

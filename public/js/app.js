@@ -243,8 +243,10 @@ function scheduleBackgroundPoll() {
   }
 }
 
-// ---------- Auth Screen (Copy-Pastable Team Credentials + Persistent Session + Forgot Password) ----------
+// ---------- Auth Screen (Copy-Pastable Team Credentials + Show Password + Forgot Password Request to Pritom) ----------
 let authMode = 'login'; // 'login' | 'forgot' | 'register'
+let forgotSentInfo = null; // { name, email, message }
+
 function renderAuth() {
   const needsSetup = state.boot?.needsSetup;
   if (needsSetup) authMode = 'register';
@@ -272,7 +274,10 @@ function renderAuth() {
                 <label>Password</label>
                 <a href="#" id="link-forgot-pw" style="font-size:12px;font-weight:600">Forgot password?</a>
               </div>
-              <input name="password" id="auth-pass" type="password" required placeholder="••••••••">
+              <div class="pw-wrap">
+                <input name="password" id="auth-pass" type="password" required placeholder="••••••••">
+                <button type="button" class="pw-toggle-btn" data-toggle-pw="auth-pass">Show</button>
+              </div>
             </div>
             <button type="submit" class="btn btn-primary" style="width:100%;padding:11px;margin-top:4px">
               Sign In →
@@ -298,20 +303,26 @@ function renderAuth() {
             </div>
           </div>
         ` : authMode === 'forgot' ? `
-          <div style="margin-bottom:14px;font-size:13px;color:var(--ink-2)">
-            Enter your team email and choose a new password. You will be signed in immediately.
+          <div style="margin-bottom:14px;font-size:13px;color:var(--ink-2);line-height:1.5">
+            Enter your team email below to request a new password. Your request will be sent directly to <strong>Pritom</strong>, and he will provide you with a new password.
           </div>
+
+          ${forgotSentInfo ? `
+            <div class="info-box" style="border-color:var(--accent);background:var(--accent-soft);margin-bottom:14px">
+              <div style="font-weight:700;color:var(--accent);margin-bottom:4px">✓ Request Sent to Pritom</div>
+              <div style="font-size:12.5px;color:var(--ink);line-height:1.5">
+                Password reset requested for <strong>${esc(forgotSentInfo.email)}</strong>. Pritom will set a new password in his Admin dashboard and provide it to you.
+              </div>
+            </div>
+          ` : ''}
+
           <form id="forgot-form">
             <div class="field">
               <label>Your Team Email</label>
-              <input name="email" type="email" required placeholder="e.g. minhaj@brightmind.com">
-            </div>
-            <div class="field">
-              <label>New Password</label>
-              <input name="newPassword" type="password" required minlength="6" placeholder="Enter new password (min 6 chars)">
+              <input name="email" type="email" required placeholder="e.g. minhaj@brightmind.com" value="${esc(forgotSentInfo?.email || '')}">
             </div>
             <button type="submit" class="btn btn-primary" style="width:100%;padding:11px;margin-top:4px">
-              Reset Password &amp; Sign In →
+              Request New Password →
             </button>
             <button type="button" class="btn" id="btn-back-login" style="width:100%;margin-top:8px">
               ← Back to Sign In
@@ -329,7 +340,10 @@ function renderAuth() {
             </div>
             <div class="field">
               <label>Password</label>
-              <input name="password" type="password" required minlength="8" placeholder="At least 8 characters">
+              <div class="pw-wrap">
+                <input name="password" id="reg-pass" type="password" required minlength="8" placeholder="At least 8 characters">
+                <button type="button" class="pw-toggle-btn" data-toggle-pw="reg-pass">Show</button>
+              </div>
             </div>
             ${!needsSetup ? `
               <div class="field">
@@ -346,6 +360,17 @@ function renderAuth() {
     </div>
   `;
 
+  app.querySelectorAll('[data-toggle-pw]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const inp = document.getElementById(btn.dataset.togglePw);
+      if (!inp) return;
+      const isPw = inp.type === 'password';
+      inp.type = isPw ? 'text' : 'password';
+      btn.textContent = isPw ? 'Hide' : 'Show';
+      inp.focus();
+    });
+  });
+
   app.querySelectorAll('[data-copy-cred]').forEach(btn => {
     btn.addEventListener('click', () => {
       copyText(btn.dataset.copyCred, `Copied: ${btn.dataset.copyCred}`);
@@ -354,11 +379,13 @@ function renderAuth() {
 
   app.querySelector('#link-forgot-pw')?.addEventListener('click', (e) => {
     e.preventDefault();
+    forgotSentInfo = null;
     authMode = 'forgot';
     renderAuth();
   });
 
   app.querySelector('#btn-back-login')?.addEventListener('click', () => {
+    forgotSentInfo = null;
     authMode = 'login';
     renderAuth();
   });
@@ -368,10 +395,9 @@ function renderAuth() {
     const fd = new FormData(e.target);
     try {
       const res = await api('/api/auth/forgot-password', { method: 'POST', body: Object.fromEntries(fd.entries()) });
-      state.user = res.user;
-      toast(`✓ Password updated! Welcome back, ${state.user.name}.`);
-      await loadAllData();
-      handleHashRoute();
+      forgotSentInfo = res;
+      toast('✓ Password request sent to Pritom!');
+      renderAuth();
     } catch (err) {
       toast(err.message, true);
     }
@@ -425,6 +451,7 @@ function renderApp() {
             ${isAdmin ? `
               <button type="button" class="top-nav-btn ${state.view === 'team' ? 'active' : ''}" data-view="team">
                 Team (${TEAM_CREDENTIALS.length})
+                ${s.pendingPasswordResets ? `<span class="user-star-count" style="margin-left:4px">🔔 ${s.pendingPasswordResets}</span>` : ''}
               </button>
             ` : ''}
           </nav>
@@ -748,9 +775,68 @@ function renderProfileView() {
 }
 
 function renderTeamView() {
-  const { members, inviteCode } = state.team;
+  const { members = [], inviteCode, resetRequests = [] } = state.team || {};
+  const lastProvided = state.lastProvidedPassword; // { name, email, password }
+
   return `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:18px">
+    ${lastProvided ? `
+      <div class="info-box" style="border-color:var(--accent);background:var(--accent-soft);margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+        <div>
+          <div style="font-weight:800;color:var(--accent);font-size:14px">
+            ✓ New Password Set for ${esc(lastProvided.name.replace(/\s*\(Admin\)/i, ''))} (${esc(lastProvided.email)})
+          </div>
+          <div style="font-size:13px;color:var(--ink);margin-top:4px">
+            New Password: <strong style="font-family:var(--font-mono);background:var(--bg);padding:3px 9px;border-radius:6px;user-select:all">${esc(lastProvided.password)}</strong>
+            <span style="color:var(--ink-2);margin-left:8px">— Copy and send this to ${esc(lastProvided.name.replace(/\s*\(Admin\)/i, ''))}.</span>
+          </div>
+        </div>
+        <button type="button" class="btn btn-primary btn-sm" data-copy-text="Email: ${esc(lastProvided.email)}&#10;New Password: ${esc(lastProvided.password)}">
+          Copy Credentials for ${esc(lastProvided.name.replace(/\s*\(Admin\)/i, ''))}
+        </button>
+      </div>
+    ` : ''}
+
+    <div class="lib-card" style="margin-bottom:18px;border-color:${resetRequests.length ? 'var(--gold)' : 'var(--border)'}">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <div>
+          <h3 style="margin:0;font-size:17px;font-weight:700">
+            🔔 Password Reset Requests (${resetRequests.length})
+          </h3>
+          <p style="margin:4px 0 0;font-size:13px;color:var(--mute)">
+            When a teammate clicks "Forgot password?" and requests a new password, it appears here for you to set and provide to them.
+          </p>
+        </div>
+      </div>
+
+      ${resetRequests.length === 0 ? `
+        <div class="info-box" style="color:var(--mute);font-size:13px">
+          No pending password reset requests right now. You can also set a new password for any teammate below at any time.
+        </div>
+      ` : `
+        <div style="display:flex;flex-direction:column;gap:10px;margin-top:6px">
+          ${resetRequests.map(req => `
+            <form class="info-box" data-admin-reset-form="${req.user_id}" style="border-color:rgba(245,158,11,0.35);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+              <div>
+                <div style="font-weight:700;font-size:14.5px;color:var(--ink)">
+                  ${esc(req.name.replace(/\s*\(Admin\)/i, ''))}
+                  <span class="user-star-count" style="margin-left:6px">Requested ${relTime(req.created_at)}</span>
+                </div>
+                <div style="font-family:var(--font-mono);font-size:12px;color:var(--ink-2);margin-top:2px">${esc(req.email)}</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <div class="pw-wrap" style="width:230px">
+                  <input name="newPassword" id="req-pw-${req.user_id}" type="text" required minlength="6" placeholder="Enter new password…" style="padding:7px 11px;border-radius:8px;border:1px solid var(--border-2);background:var(--bg);color:var(--ink);font-size:12.5px">
+                  <button type="button" class="pw-toggle-btn" data-toggle-pw="req-pw-${req.user_id}">Hide</button>
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm">Set &amp; Provide Password →</button>
+              </div>
+            </form>
+          `).join('')}
+        </div>
+      `}
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px">
       <div class="lib-card">
         <h3 style="margin:0;font-size:17px;font-weight:700">BMDGL Team (${members.length})</h3>
         ${inviteCode ? `
@@ -763,15 +849,24 @@ function renderTeamView() {
           </div>
         ` : ''}
         <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
-          ${members.map(m => `
-            <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2)">
-              <span class="avatar" style="background:#10B981">${esc(initials(m.name))}</span>
-              <div style="flex:1">
-                <div style="font-weight:600">${esc(m.name)}</div>
-                <div style="font-size:11.5px;color:var(--mute)">${esc(m.email)} · ${m.shared || 0} shared</div>
-              </div>
-            </div>
-          `).join('')}
+          ${members.map(m => {
+            const cleanName = (m.name || '').replace(/\s*\(Admin\)/i, '');
+            return `
+              <form data-admin-reset-form="${m.id}" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2)">
+                <div style="display:flex;align-items:center;gap:10px;min-width:180px">
+                  <span class="avatar" style="background:#10B981">${esc(initials(cleanName))}</span>
+                  <div>
+                    <div style="font-weight:600">${esc(cleanName)}</div>
+                    <div style="font-size:11.5px;color:var(--mute)">${esc(m.email)} · ${m.shared || 0} shared</div>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px">
+                  <input name="newPassword" type="text" required minlength="6" placeholder="New password…" style="width:145px;padding:5px 9px;border-radius:7px;border:1px solid var(--border-2);background:var(--bg);color:var(--ink);font-size:12px">
+                  <button type="submit" class="btn btn-sm">Set Password</button>
+                </div>
+              </form>
+            `;
+          }).join('')}
         </div>
       </div>
 
@@ -1561,6 +1656,44 @@ function bindMainEvents() {
     btn.addEventListener('click', () => {
       const r = state.resources[Number(btn.dataset.copyRes)];
       if (r && r.prompt_text) copyText(r.prompt_text, 'Prompt copied to clipboard');
+    });
+  });
+
+  main.querySelectorAll('[data-toggle-pw]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const inp = document.getElementById(btn.dataset.togglePw);
+      if (!inp) return;
+      const isPw = inp.type === 'password';
+      inp.type = isPw ? 'text' : 'password';
+      btn.textContent = isPw ? 'Hide' : 'Show';
+      inp.focus();
+    });
+  });
+
+  main.querySelectorAll('[data-admin-reset-form]').forEach(form => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const uid = form.dataset.adminResetForm;
+      const newPassword = (form.newPassword?.value || '').trim();
+      if (!newPassword || newPassword.length < 6) {
+        toast('New password must be at least 6 characters.', true);
+        return;
+      }
+      try {
+        const res = await api(`/api/team/${uid}/reset-password`, {
+          method: 'POST',
+          body: { newPassword },
+        });
+        state.lastProvidedPassword = {
+          name: res.user?.name || 'Teammate',
+          email: res.user?.email || '',
+          password: res.newPassword || newPassword,
+        };
+        toast(`✓ New password set for ${state.lastProvidedPassword.name.replace(/\s*\(Admin\)/i, '')}!`);
+        await loadAllData();
+      } catch (err) {
+        toast(err.message, true);
+      }
     });
   });
 

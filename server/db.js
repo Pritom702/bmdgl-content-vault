@@ -123,6 +123,13 @@ CREATE TABLE IF NOT EXISTS collection_items (
   added_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (collection_id, item_id)
 );
+CREATE TABLE IF NOT EXISTS password_reset_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  resolved_at TEXT
+);
 `);
 
 export function getSetting(key, fallback = null) {

@@ -1215,3 +1215,33 @@ button { cursor: pointer; }
   word-break: break-all;
   line-height: 1.45;
 }
+
+/* ---------- Show / Hide Password Input Wrapper ---------- */
+.pw-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.pw-wrap input {
+  width: 100%;
+  padding-right: 68px !important;
+}
+.pw-toggle-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  transition: all 0.12s;
+}
+.pw-toggle-btn:hover {
+  border-color: var(--accent);
+  color: var(--ink);
+}
