@@ -73,7 +73,9 @@ async function process({ id, steps }) {
         upd.title = meta.title;
         upd.title_source = 'meta';
       }
-      if (meta.caption && !item.caption) upd.caption = meta.caption;
+      if (meta.caption && (!item.caption || meta.caption.length > item.caption.length)) {
+        upd.caption = meta.caption;
+      }
       if (meta.author_name && !item.author_name) upd.author_name = meta.author_name;
       if (meta.author_url && !item.author_url) upd.author_url = meta.author_url;
       if (meta.duration && !item.duration) upd.duration = meta.duration;
@@ -90,7 +92,7 @@ async function process({ id, steps }) {
   if (!item) return;
   const info = item.canonical_url ? analyzeUrl(item.canonical_url) : null;
   const wantArchive = steps.archive === 'force'
-    || (steps.archive && config.autoArchive && info && isVideoPlatform(info) && info.platform !== 'youtube' && !item.media_path);
+    || (steps.archive && config.autoArchive && info && isVideoPlatform(info) && !item.media_path);
   if (wantArchive && config.hasYtdlp && info) {
     touch(id, { archive_status: 'processing', archive_error: null });
     try {
@@ -117,7 +119,7 @@ async function process({ id, steps }) {
     if (t) touch(id, { thumb_path: t });
   }
 
-  // 3. Auto-generate clean Title & Description (from video/page + any attached tool/GitHub URL)
+  // 3. Auto-generate clean, accurate Title, Category, Description & How to Use It
   if (steps.ai) {
     touch(id, { ai_status: 'processing', ai_error: null });
     try {
@@ -130,15 +132,17 @@ async function process({ id, steps }) {
           try {
             const rInfo = analyzeUrl(r.url);
             const rm = await fetchMetadata(r.url, rInfo);
-            if (rm && (rm.title || rm.caption)) {
+            if (rm && (rm.title || rm.caption || rm.full_text)) {
               resourceMeta.push(rm);
-              if ((!r.title || r.title === 'Tool / Resource Link') && rm.title) {
-                const cleanResTitle = rm.title.replace(/^GitHub\s*-\s*/i, '').slice(0, 120);
-                db.prepare('UPDATE resources SET title = ?, content = COALESCE(NULLIF(content, ""), ?) WHERE id = ?')
-                  .run(cleanResTitle, (rm.caption || '').slice(0, 500), r.id);
-                r.title = cleanResTitle;
-                if (!r.content && rm.caption) r.content = rm.caption.slice(0, 500);
-              }
+              const genericResTitle = !r.title || /^(Tool \/ Resource Link|Google Drive Folder \/ Doc|Shared Prompt \/ Instructions|GitHub Repository|Skool Community Resource)$/i.test(r.title);
+              const nextTitle = (genericResTitle && rm.title) ? rm.title.replace(/^GitHub\s*-\s*/i, '').slice(0, 120) : r.title;
+              const nextContent = rm.full_text ? rm.full_text : (r.content || (rm.caption || '').replace(/\.\.\.$/, '').slice(0, 600));
+              const nextKind = rm.full_text && /prompt|input|style|rule/i.test(rm.full_text) ? 'prompt' : r.kind;
+              db.prepare('UPDATE resources SET kind = ?, title = ?, content = ? WHERE id = ?')
+                .run(nextKind, nextTitle, nextContent, r.id);
+              r.kind = nextKind;
+              r.title = nextTitle;
+              r.content = nextContent;
             }
           } catch { /* ignore */ }
         }

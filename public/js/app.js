@@ -3,14 +3,14 @@ import {
   analyzeUrl, extractUrl,
 } from './platforms.js';
 
-const TEAM_DEMO_USERS = [
-  { name: 'Pritom',   email: 'pritom@brightmind.com',   password: 'password123', role: 'Admin',  color: '#10B981' },
-  { name: 'Sharafat', email: 'sharafat@brightmind.com', password: 'password123', role: 'Admin',  color: '#F59E0B' },
-  { name: 'Minhaj',   email: 'minhaj@brightmind.com',   password: 'password123', role: 'Member', color: '#EA580C' },
-  { name: 'Saiful',   email: 'saiful@brightmind.com',   password: 'password123', role: 'Member', color: '#0D9488' },
-  { name: 'Rafi',     email: 'rafi@brightmind.com',     password: 'password123', role: 'Member', color: '#65A30D' },
-  { name: 'Tanvir',   email: 'tanvir@brightmind.com',   password: 'password123', role: 'Member', color: '#D97706' },
-  { name: 'Akib',     email: 'akib@brightmind.com',     password: 'password123', role: 'Member', color: '#E11D48' },
+const TEAM_CREDENTIALS = [
+  { name: 'Pritom',   email: 'pritom@brightmind.com',   password: 'password123' },
+  { name: 'Sharafat', email: 'sharafat@brightmind.com', password: 'password123' },
+  { name: 'Minhaj',   email: 'minhaj@brightmind.com',   password: 'password123' },
+  { name: 'Saiful',   email: 'saiful@brightmind.com',   password: 'password123' },
+  { name: 'Rafi',     email: 'rafi@brightmind.com',     password: 'password123' },
+  { name: 'Tanvir',   email: 'tanvir@brightmind.com',   password: 'password123' },
+  { name: 'Akib',     email: 'akib@brightmind.com',     password: 'password123' },
 ];
 
 const state = {
@@ -137,7 +137,8 @@ function parseSmartResourceInput(raw) {
   let kind = 'prompt';
   let title = 'Shared Prompt / Instructions';
   if (url) {
-    if (/drive\.google\.com|docs\.google\.com/i.test(url)) { kind = 'drive'; title = rest || 'Google Drive Folder / Doc'; }
+    if (/docs\.google\.com\/document/i.test(url)) { kind = 'prompt'; title = rest || 'Google Doc Prompt'; }
+    else if (/drive\.google\.com|docs\.google\.com/i.test(url)) { kind = 'drive'; title = rest || 'Google Drive Folder / Doc'; }
     else if (/skool\.com/i.test(url)) { kind = 'skool'; title = rest || 'Skool Community Resource'; }
     else if (/github\.com/i.test(url)) {
       kind = 'tool';
@@ -224,7 +225,7 @@ function scheduleBackgroundPoll() {
   }
 }
 
-// ---------- Auth Screen (Confidential Portal + 1-Tap Team Login + Forgot Password) ----------
+// ---------- Auth Screen (Copy-Pastable Team Credentials + Persistent Session + Forgot Password) ----------
 let authMode = 'login'; // 'login' | 'forgot' | 'register'
 function renderAuth() {
   const needsSetup = state.boot?.needsSetup;
@@ -238,29 +239,11 @@ function renderAuth() {
           <img src="/logo.png" alt="Bright Mind">
           <div>
             <h2>BMDGL Content Vault</h2>
-            <div class="sub">Internal Team Repository · Persistent Session</div>
+            <div class="sub">Internal Team Repository · Persistent Login</div>
           </div>
         </div>
 
         ${authMode === 'login' ? `
-          <div class="team-quick-box">
-            <div class="team-quick-title">
-              <span>1-Click Team Access</span>
-              <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--mute)">pw: password123</span>
-            </div>
-            <div class="team-chips">
-              ${TEAM_DEMO_USERS.map(u => `
-                <button type="button" class="team-chip-btn" data-quick-login="${esc(u.email)}">
-                  <span class="team-chip-dot" style="background:${u.color}">${esc(u.name[0])}</span>
-                  <div style="min-width:0">
-                    <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(u.name)}</div>
-                    <div style="font-size:10px;color:var(--mute);font-weight:500">${esc(u.role)}</div>
-                  </div>
-                </button>
-              `).join('')}
-            </div>
-          </div>
-
           <form id="auth-form">
             <div class="field">
               <label>Email Address</label>
@@ -277,6 +260,25 @@ function renderAuth() {
               Sign In →
             </button>
           </form>
+
+          <div class="cred-box">
+            <div class="cred-box-head">
+              <span>Team Credentials (Copy &amp; Paste)</span>
+            </div>
+            <div class="cred-pw-row">
+              <span style="color:var(--mute)">Default Password: <strong style="font-family:var(--font-mono);color:var(--ink);user-select:all">password123</strong></span>
+              <button type="button" class="cred-copy-btn" data-copy-cred="password123">Copy Password</button>
+            </div>
+            <div class="cred-list">
+              ${TEAM_CREDENTIALS.map(u => `
+                <div class="cred-row">
+                  <span class="cred-name">${esc(u.name)}</span>
+                  <span class="cred-email">${esc(u.email)}</span>
+                  <button type="button" class="cred-copy-btn" data-copy-cred="${esc(u.email)}">Copy Email</button>
+                </div>
+              `).join('')}
+            </div>
+          </div>
         ` : authMode === 'forgot' ? `
           <div style="margin-bottom:14px;font-size:13px;color:var(--ink-2)">
             Enter your team email and choose a new password. You will be signed in immediately.
@@ -326,21 +328,9 @@ function renderAuth() {
     </div>
   `;
 
-  app.querySelectorAll('[data-quick-login]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const email = btn.dataset.quickLogin;
-      try {
-        const res = await api('/api/auth/login', { method: 'POST', body: { email, password: 'password123' } });
-        state.user = res.user;
-        toast(`Signed in as ${state.user.name}`);
-        await loadAllData();
-        handleHashRoute();
-      } catch {
-        const em = document.getElementById('auth-email');
-        if (em) em.value = email;
-        document.getElementById('auth-pass')?.focus();
-        toast('Custom password set — enter your password or click Forgot password.');
-      }
+  app.querySelectorAll('[data-copy-cred]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      copyText(btn.dataset.copyCred, `Copied: ${btn.dataset.copyCred}`);
     });
   });
 
@@ -417,7 +407,7 @@ function renderApp() {
               Tools &amp; Links
             </button>
             <button type="button" class="top-nav-btn ${state.view === 'team' ? 'active' : ''}" data-view="team">
-              Team (${TEAM_DEMO_USERS.length})
+              Team (${TEAM_CREDENTIALS.length})
             </button>
           </nav>
 
@@ -456,60 +446,76 @@ function renderMainView() {
   return renderVaultView();
 }
 
-// ---------- Frictionless 2-Box Quick Drop + Vault Feed ----------
+// ---------- Frictionless 2-Box Quick Drop + Categorized Vault Feed ----------
 function renderVaultView() {
   const f = state.filters;
   const activeFiltersCount = ['platform', 'category', 'type', 'status', 'resource', 'tag', 'fav', 'pending', 'collection', 'sharer', 'q']
     .filter(k => f[k]).length;
+
+  const byCatMap = {};
+  for (const row of (state.stats?.byCategory || [])) {
+    byCatMap[row.category || row.k] = row.n;
+  }
 
   return `
     <form class="quick-composer" id="instant-drop-form">
       <div class="qc-top">
         <div class="qc-title">
           <span>Quick Drop to Vault</span>
-          <span class="qc-badge">Auto-Fetches Video, Title &amp; Description</span>
+          <span class="qc-badge">Auto-Detects Video, Category, Title &amp; Description</span>
         </div>
         <button type="button" class="btn btn-sm" id="btn-open-upload">📎 Upload File</button>
       </div>
       <div class="qc-grid">
         <input class="qc-input" id="qc-url" placeholder="1. Paste Reel / Post / YouTube / TikTok / Skool link…" autocomplete="off">
-        <input class="qc-input" id="qc-prompt" placeholder="2. Paste Prompt, GitHub / Drive / Tool link, or Comment Keyword…" autocomplete="off">
+        <input class="qc-input" id="qc-prompt" placeholder="2. Paste Prompt, Google Doc / GitHub / Drive link, or Keyword…" autocomplete="off">
         <button type="submit" class="qc-submit" id="qc-submit-btn">Save to Vault →</button>
       </div>
       <div class="qc-foot">
-        <span id="qc-live-hint">Paste the content link and the prompt/tool link — the Vault downloads the HD video for inline playback and writes a clean English title &amp; description automatically.</span>
+        <span id="qc-live-hint">Paste the content link and the prompt/tool link — the Vault automatically categorizes it and writes a concise, accurate description and usage guide.</span>
       </div>
     </form>
 
     <div class="filter-bar">
-      <div class="filter-chips">
-        <button class="chip ${!f.platform && !f.fav && !f.pending ? 'active' : ''}" data-plat="">All (${state.stats?.total || 0})</button>
-        <button class="chip ${f.fav === '1' ? 'active' : ''}" data-nav="fav">★ Starred</button>
-        ${['facebook', 'instagram', 'youtube', 'tiktok', 'skool', 'drive'].map(p => {
-          const info = PLATFORMS[p];
-          return `<button class="chip ${f.platform === p ? 'active' : ''}" data-plat="${p}">${esc(info.label)}</button>`;
-        }).join('')}
+      <!-- Category Filter Row -->
+      <div class="filter-row">
+        <div class="filter-chips">
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--mute);margin-right:4px">Categories:</span>
+          <button class="chip cat-chip ${!f.category ? 'active' : ''}" data-cat="">All (${state.stats?.total || 0})</button>
+          ${CATEGORIES.filter(c => c !== 'Other' || byCatMap[c]).map(c => {
+            const count = byCatMap[c] || 0;
+            return `<button class="chip cat-chip ${f.category === c ? 'active' : ''}" data-cat="${esc(c)}">${esc(c)}${count ? ` (${count})` : ''}</button>`;
+          }).join('')}
+        </div>
       </div>
 
-      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-        <select class="filter-select" id="flt-category">
-          <option value="">All Categories</option>
-          ${CATEGORIES.map(c => `<option value="${esc(c)}" ${f.category === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
-        </select>
+      <!-- Platform & Sort Row -->
+      <div class="filter-row">
+        <div class="filter-chips">
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--mute);margin-right:4px">Platform:</span>
+          <button class="chip ${!f.platform && !f.fav ? 'active' : ''}" data-plat="">All Platforms</button>
+          <button class="chip ${f.fav === '1' ? 'active' : ''}" data-nav="fav">★ Starred</button>
+          ${['facebook', 'instagram', 'youtube', 'tiktok', 'skool', 'drive'].map(p => {
+            const info = PLATFORMS[p];
+            return `<button class="chip ${f.platform === p ? 'active' : ''}" data-plat="${p}">${esc(info.label)}</button>`;
+          }).join('')}
+        </div>
 
-        <select class="filter-select" id="flt-sort">
-          <option value="newest" ${f.sort === 'newest' ? 'selected' : ''}>Newest First</option>
-          <option value="top" ${f.sort === 'top' ? 'selected' : ''}>Most Upvoted</option>
-        </select>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+          <select class="filter-select" id="flt-sort">
+            <option value="newest" ${f.sort === 'newest' ? 'selected' : ''}>Newest First</option>
+            <option value="top" ${f.sort === 'top' ? 'selected' : ''}>Most Upvoted</option>
+          </select>
 
-        ${activeFiltersCount ? `<button class="btn btn-sm" id="btn-clear-filters">✕ Reset (${activeFiltersCount})</button>` : ''}
+          ${activeFiltersCount ? `<button class="btn btn-sm" id="btn-clear-filters">✕ Reset Filters (${activeFiltersCount})</button>` : ''}
+        </div>
       </div>
     </div>
 
     ${state.items.length === 0 ? `
       <div class="empty-state">
-        <h3>No content saved yet</h3>
-        <p style="color:var(--mute)">Paste any Reel, video, post, or tool link in the Quick Drop bar above.</p>
+        <h3>No content in this filter</h3>
+        <p style="color:var(--mute)">Paste a Reel, YouTube video, or tool link in the Quick Drop bar above, or reset your filters.</p>
         ${activeFiltersCount ? `<button class="btn" id="btn-empty-reset">Clear Filters</button>` : ''}
       </div>
     ` : state.layout === 'list' ? `
@@ -528,7 +534,8 @@ function renderItemCard(item) {
   const plat = PLATFORMS[item.platform] || PLATFORMS.web;
   const ctype = CONTENT_TYPES[item.content_type] || 'Post';
   const hasPlayableVideo = Boolean(item.media_url && (item.media_mime || '').startsWith('video/'));
-  const desc = item.summary || item.what_it_does || 'Fetching description…';
+  const desc = item.summary || 'Fetching description…';
+  const usage = item.what_it_does || '';
   const res = item.primary_resource;
 
   return `
@@ -549,7 +556,7 @@ function renderItemCard(item) {
         </div>
         <div class="play-overlay" title="Click to watch video & view details">▶</div>
         <div class="vcard-badges-bottom">
-          ${hasPlayableVideo ? `<span class="offline-badge">● HD Video Ready</span>` : (item.archive_status === 'processing' ? `<span class="type-pill">Downloading video…</span>` : `<span></span>`)}
+          ${hasPlayableVideo ? `<span class="offline-badge">● HD Video Ready</span>` : (item.platform === 'youtube' ? `<span class="offline-badge">● YouTube Player Ready</span>` : (item.archive_status === 'processing' ? `<span class="type-pill">Downloading video…</span>` : `<span></span>`))}
         </div>
       </div>
 
@@ -563,17 +570,20 @@ function renderItemCard(item) {
 
         <p class="vcard-desc">${esc(desc)}</p>
 
+        ${usage && usage !== desc ? `
+          <p class="vcard-usage"><strong>How to use it:</strong> ${esc(usage)}</p>
+        ` : ''}
+
         ${res ? `
           <div class="vcard-resource-bar">
             <div class="vcard-resource-info">
-              <span class="vcard-resource-label">${esc(RESOURCE_KINDS[res.kind] || 'Attached Tool / Prompt')}</span>
-              <span class="vcard-resource-title">${esc(res.title || res.url || res.content)}</span>
+              <span class="vcard-resource-label">${esc(RESOURCE_KINDS[res.kind] || 'Attached Resource')}</span>
+              <span class="vcard-resource-title">${esc(res.title || res.url || 'Attached Resource')}</span>
             </div>
-            ${res.url ? `
-              <a href="${esc(res.url)}" target="_blank" rel="noopener" class="btn btn-sm btn-primary" title="Open attached tool/link">↗ Open</a>
-            ` : res.content ? `
-              <button type="button" class="btn btn-sm" data-copy-text="${esc(res.content)}">Copy</button>
-            ` : ''}
+            <div style="display:flex;gap:6px;flex-shrink:0">
+              ${(res.kind === 'prompt' && res.content) ? `<button type="button" class="btn btn-sm" data-copy-text="${esc(res.content)}">Copy Prompt</button>` : (!res.url && res.content ? `<button type="button" class="btn btn-sm" data-copy-text="${esc(res.content)}">Copy</button>` : '')}
+              ${res.url ? `<a href="${esc(res.url)}" target="_blank" rel="noopener" class="btn btn-sm btn-primary" title="Open link">↗ Open</a>` : ''}
+            </div>
           </div>
         ` : ''}
 
@@ -610,11 +620,11 @@ function renderItemRow(item) {
       ${item.thumb ? `<img class="vrow-thumb" src="${esc(item.thumb)}" alt="">` : `<div class="vrow-thumb" style="display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700">▶</div>`}
       <div style="flex:1;min-width:0">
         <div style="display:flex;gap:6px;align-items:center;margin-bottom:3px">
-          <span class="cat-badge">${esc(plat.label)}</span>
+          <span class="type-pill" style="padding:2px 8px">${esc(plat.label)}</span>
           <span class="cat-badge">${esc(item.category)}</span>
         </div>
-        <div style="font-weight:700;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(item.title)}</div>
-        <div style="font-size:12.5px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(desc)}</div>
+        <div style="font-weight:700;font-size:14.5px">${esc(item.title)}</div>
+        <div style="font-size:12.5px;color:var(--ink-2)">${esc(desc)}</div>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <button type="button" class="act-btn ${item.upvoted ? 'active-up' : ''}" data-upvote="${item.id}">▲ ${item.upvotes || 0}</button>
@@ -685,7 +695,7 @@ function renderTeamView() {
   return `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:18px">
       <div class="lib-card">
-        <h3 style="margin:0;font-size:17px;font-weight:700">BMDGL Team Members (${members.length})</h3>
+        <h3 style="margin:0;font-size:17px;font-weight:700">BMDGL Team (${members.length})</h3>
         ${inviteCode ? `
           <div class="info-box" style="display:flex;align-items:center;justify-content:space-between;gap:10px">
             <div>
@@ -700,7 +710,7 @@ function renderTeamView() {
             <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2)">
               <span class="avatar" style="background:#10B981">${esc(initials(m.name))}</span>
               <div style="flex:1">
-                <div style="font-weight:600">${esc(m.name)} <span style="font-size:11px;color:var(--mute)">(${esc(m.role)})</span></div>
+                <div style="font-weight:600">${esc(m.name)}</div>
                 <div style="font-size:11.5px;color:var(--mute)">${esc(m.email)} · ${m.shared || 0} shared</div>
               </div>
             </div>
@@ -776,7 +786,7 @@ function openUploadModal() {
   });
 }
 
-// ---------- Item Detail Theater Modal (Simple Title + Description + Attached Tool/Prompt) ----------
+// ---------- Item Detail Theater Modal ----------
 async function openItemDetail(id) {
   try {
     const res = await api(`/api/items/${id}`);
@@ -863,7 +873,7 @@ function renderModal() {
   const item = state.activeItem;
   if (!item) { root.innerHTML = ''; return; }
   const ai = item.ai || {};
-  const summaryText = item.summary || ai.summary || item.caption || 'No description provided.';
+  const summaryText = item.summary || ai.summary || 'No description provided.';
   const usageText = item.what_it_does || ai.what_it_does || '';
 
   root.innerHTML = `
@@ -871,7 +881,7 @@ function renderModal() {
       <div class="modal-dialog xl">
         <div class="modal-head">
           <div style="display:flex;align-items:center;gap:10px;min-width:0">
-            <span class="cat-badge">${esc((PLATFORMS[item.platform] || PLATFORMS.web).label)}</span>
+            <span class="type-pill">${esc((PLATFORMS[item.platform] || PLATFORMS.web).label)}</span>
             <span class="cat-badge">${esc(item.category)}</span>
             <span style="font-size:12px;color:var(--mute)">Shared by ${esc(item.shared_by?.name || 'Team')} · ${relTime(item.created_at)}</span>
           </div>
@@ -891,17 +901,17 @@ function renderModal() {
           <div class="detail-pane">
             <div class="detail-tabs">
               <button type="button" class="${state.activeTab === 'overview' ? 'active' : ''}" data-dtab="overview">Overview &amp; Resources</button>
-              <button type="button" class="${state.activeTab === 'edit' ? 'active' : ''}" data-dtab="edit">Edit Title &amp; Description</button>
+              <button type="button" class="${state.activeTab === 'edit' ? 'active' : ''}" data-dtab="edit">Edit Title, Category &amp; Description</button>
             </div>
 
             ${state.activeTab === 'overview' ? `
               <div>
-                <h2 style="margin:0 0 10px;font-size:20px;font-weight:700;line-height:1.35;color:var(--ink)">${esc(item.title)}</h2>
+                <h2 style="margin:0 0 12px;font-size:20px;font-weight:700;line-height:1.35;color:var(--ink)">${esc(item.title)}</h2>
                 <div class="info-box">
                   <h4>Description</h4>
                   <p style="margin:0;font-size:14px;line-height:1.6;color:var(--ink)">${esc(summaryText)}</p>
                   ${usageText && usageText !== summaryText ? `
-                    <p style="margin:10px 0 0;padding-top:10px;border-top:1px solid var(--border);font-size:13.5px;line-height:1.55;color:var(--ink-2)">
+                    <p style="margin:12px 0 0;padding-top:12px;border-top:1px solid var(--border);font-size:13.5px;line-height:1.55;color:var(--ink-2)">
                       <strong style="color:var(--ink)">How to use it:</strong> ${esc(usageText)}
                     </p>
                   ` : ''}
@@ -952,7 +962,7 @@ function renderModal() {
                     <h4>
                       <span><span class="cat-badge">${esc(RESOURCE_KINDS[r.kind] || r.kind)}</span> ${esc(r.title || 'Attached Resource')}</span>
                       <div style="display:flex;gap:6px">
-                        ${r.content ? `<button class="btn btn-sm" data-copy-text="${esc(r.content)}">Copy Text</button>` : ''}
+                        ${r.content ? `<button class="btn btn-sm" data-copy-text="${esc(r.content)}">Copy Prompt / Text</button>` : ''}
                         ${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener" class="btn btn-sm btn-primary">↗ Open Link</a>` : ''}
                         <button class="btn btn-sm btn-danger" data-del-res="${r.id}" title="Remove resource">✕</button>
                       </div>
@@ -965,8 +975,8 @@ function renderModal() {
 
               ${item.caption ? `
                 <div class="info-box">
-                  <h4>Original Post Caption</h4>
-                  <div style="font-size:12.5px;color:var(--ink-2);white-space:pre-wrap;line-height:1.5">${esc(item.caption)}</div>
+                  <h4>Original Caption / Video Notes</h4>
+                  <div style="font-size:12.5px;color:var(--ink-2);white-space:pre-wrap;line-height:1.5;max-height:180px;overflow-y:auto">${esc(item.caption)}</div>
                 </div>
               ` : ''}
 
@@ -1004,11 +1014,11 @@ function renderModal() {
                   </select>
                 </div>
                 <div class="field">
-                  <label>Description</label>
+                  <label>Small, Accurate Description</label>
                   <textarea name="summary" rows="3">${esc(item.summary || '')}</textarea>
                 </div>
                 <div class="field">
-                  <label>How to Use It (optional)</label>
+                  <label>How to Use It</label>
                   <textarea name="what_it_does" rows="2">${esc(item.what_it_does || '')}</textarea>
                 </div>
                 <div style="display:flex;justify-content:space-between;margin-top:14px">
@@ -1194,7 +1204,7 @@ function bindShellEvents() {
     const info = analyzeUrl(extractUrl(qcUrl.value) || qcUrl.value.trim());
     if (info && qcHint) {
       const plat = PLATFORMS[info.platform] || PLATFORMS.web;
-      qcHint.innerHTML = `<span style="color:var(--accent);font-weight:600">✓ ${esc(plat.label)} ${esc(CONTENT_TYPES[info.contentType] || 'Link')} detected</span> — hit Enter or click Save to pull the video and generate the title &amp; description.`;
+      qcHint.innerHTML = `<span style="color:var(--accent);font-weight:600">✓ ${esc(plat.label)} ${esc(CONTENT_TYPES[info.contentType] || 'Link')} detected</span> — hit Enter or click Save to categorize and generate the description.`;
     }
   });
 
@@ -1218,7 +1228,7 @@ function bindShellEvents() {
           ...parsed,
         },
       });
-      toast('✓ Saved to Vault! Fetching video & description…');
+      toast('✓ Saved to Vault! Fetching metadata & description…');
       await loadAllData();
       openItemDetail(res.item.id);
     } catch (err) {
@@ -1258,6 +1268,13 @@ function bindShellEvents() {
     });
   });
 
+  app.querySelectorAll('[data-cat]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.filters.category = btn.dataset.cat;
+      loadItems();
+    });
+  });
+
   app.querySelectorAll('[data-plat]').forEach(btn => {
     btn.addEventListener('click', () => {
       state.filters.fav = '';
@@ -1267,7 +1284,6 @@ function bindShellEvents() {
     });
   });
 
-  app.querySelector('#flt-category')?.addEventListener('change', (e) => { state.filters.category = e.target.value; loadItems(); });
   app.querySelector('#flt-sort')?.addEventListener('change', (e) => { state.filters.sort = e.target.value; loadItems(); });
 
   const searchInput = app.querySelector('#global-search');

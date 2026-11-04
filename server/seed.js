@@ -3,7 +3,7 @@ import { createUser } from './auth.js';
 
 export const TEAM_ACCOUNTS = [
   { name: 'Pritom',   email: 'pritom@brightmind.com',   password: 'password123', role: 'admin' },
-  { name: 'Sharafat', email: 'sharafat@brightmind.com', password: 'password123', role: 'admin' },
+  { name: 'Sharafat', email: 'sharafat@brightmind.com', password: 'password123', role: 'member' },
   { name: 'Minhaj',   email: 'minhaj@brightmind.com',   password: 'password123', role: 'member' },
   { name: 'Saiful',   email: 'saiful@brightmind.com',   password: 'password123', role: 'member' },
   { name: 'Rafi',     email: 'rafi@brightmind.com',     password: 'password123', role: 'member' },

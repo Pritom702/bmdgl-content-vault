@@ -9,14 +9,14 @@ export function aiEnabled() {
 }
 
 /**
- * Clean, accurate English Title & Description generator when GEMINI_API_KEY is not configured.
- * Combines the Reel/post caption, page title, and any attached tool/GitHub/prompt metadata
- * into a clear, human-readable English title and description.
+ * Clean, accurate English Title, Category, small Description (summary), and small How-to-Use-It (what_it_does)
+ * generator when GEMINI_API_KEY is not configured. Never outputs "..." or raw URL dumps.
  */
 export function buildSmartLocalAnalysis({ item, resources = [], resourceMeta = [] }) {
   const rawTitle = (item.title || '')
     .replace(/^\d+[\d,.KMkm]*\s+(?:views?|reactions?|likes?)\s*[·•|-]*\s*/i, '')
-    .replace(/^(?:Tool\s*\/\s*Resource\s*Link|Shared\s*Prompt\s*\/\s*Instructions|Shared\s*Content|Facebook\s*Reel|Instagram\s*Reel)$/i, '')
+    .replace(/\s*-\s*YouTube$/i, '')
+    .replace(/^(?:Tool\s*\/\s*Resource\s*Link|Google\s*Drive\s*Folder\s*\/\s*Doc|Shared\s*Prompt\s*\/\s*Instructions|Shared\s*Content|Facebook\s*Reel|Instagram\s*Reel|YouTube\s*Video|YouTube\s*Short)$/i, '')
     .trim();
 
   const caption = (item.caption || '').trim();
@@ -24,60 +24,93 @@ export function buildSmartLocalAnalysis({ item, resources = [], resourceMeta = [
   const resText = resources.map(r => `${r.title || ''} ${r.content || ''} ${r.url || ''}`).join('\n');
   const resMetaText = resourceMeta.map(m => `${m.title || ''} ${m.caption || ''}`).join('\n');
   const fullText = `${rawTitle}\n${caption}\n${notes}\n${resText}\n${resMetaText}`.trim();
-  const lower = fullText.toLowerCase();
 
-  // 1. Detect category
+  // 1. Accurate Category Classification using weighted keyword scoring
+  const scores = {
+    'Video Editing': 0,
+    'AI Tools': 0,
+    'Prompts': 0,
+    'Hooks & Copywriting': 0,
+    'Storytelling & Scripts': 0,
+    'Ads & Funnels': 0,
+    'Design & Thumbnails': 0,
+    'Growth Strategy': 0,
+  };
+  const scoreText = `${rawTitle} ${ rawTitle } ${caption} ${notes} ${resources.map(r => r.title || '').join(' ')}`.toLowerCase();
+
+  if (/\b(edit|edited|editing|video editing|documentary|motion graphics|motion video|capcut|premiere|davinci|after effects|sfx|sound design|voiceover|mp4|frame|camera move|render)\b/i.test(scoreText)) {
+    scores['Video Editing'] += 5;
+  }
+  if (/\b(github|repo|repository|agent skill|cli|mcp|api|bot|agent-reach|youtube-agent-skill|automation tool|open-source|ai agent)\b/i.test(scoreText)) {
+    scores['AI Tools'] += 5;
+  }
+  if (/\b(prompt|system prompt|mega-prompt|copy me|paste this prompt|claude prompt|chatgpt prompt)\b/i.test(scoreText)) {
+    scores['Prompts'] += 4;
+  }
+  if (/\b(hook|scroll-stopping|headline|copywriting|opening line|curiosity gap)\b/i.test(scoreText)) {
+    scores['Hooks & Copywriting'] += 5;
+  }
+  if (/\b(storytelling|narrative|scriptwriting|story structure|dialogue)\b/i.test(scoreText)) {
+    scores['Storytelling & Scripts'] += 4;
+  }
+  if (/\b(meta ads|facebook ads|roas|ad creative|funnel|conversion rate|lead gen|boost)\b/i.test(scoreText)) {
+    scores['Ads & Funnels'] += 5;
+  }
+  if (/\b(thumbnail|canva|poster|carousel design|typography|color grading|figma)\b/i.test(scoreText)) {
+    scores['Design & Thumbnails'] += 5;
+  }
+  if (/\b(growth|algorithm|reach|followers|content strategy|channel growth)\b/i.test(scoreText)) {
+    scores['Growth Strategy'] += 3;
+  }
+  if (resources.some(r => /github\.com/i.test(r.url || ''))) scores['AI Tools'] += 3;
+  if (resources.some(r => r.kind === 'prompt' || /docs\.google\.com/i.test(r.url || ''))) scores['Prompts'] += 2;
+
   let category = 'AI Tools';
-  if (/prompt|midjourney|system prompt|mega-prompt/i.test(lower) && !/github\.com/i.test(lower)) category = 'Prompts';
-  else if (/\b(ai|automation|agent|skill|mcp|github|repo|tool|api|bot|workflow|claude|chatgpt|gemini|llm)\b/i.test(lower)) category = 'AI Tools';
-  else if (/\b(hook|scroll|headline|copywriting|opening)\b/i.test(lower)) category = 'Hooks & Copywriting';
-  else if (/\b(edit|capcut|premiere|davinci|sfx|sound|audio|timeline|motion)\b/i.test(lower)) category = 'Video Editing';
-  else if (/\b(story|script|narrative|dialogue)\b/i.test(lower)) category = 'Storytelling & Scripts';
-  else if (/\b(ad|boost|meta ads|funnel|conversion|audit|roas|lead)\b/i.test(lower)) category = 'Ads & Funnels';
-  else if (/\b(design|canva|thumbnail|carousel|poster)\b/i.test(lower)) category = 'Design & Thumbnails';
-  else category = 'Growth Strategy';
+  let bestScore = 0;
+  for (const [cat, sc] of Object.entries(scores)) {
+    if (sc > bestScore) {
+      bestScore = sc;
+      category = cat;
+    }
+  }
 
-  // 2. Build a clean, accurate English Title
-  const captionLines = caption
+  // 2. Clean, Accurate English Title (never overwrite a real YouTube/video title with a Google Doc title)
+  const captionParagraphs = caption
     .split(/\n+/)
-    .map(l => l.replace(/#[a-zA-Z0-9_]+/g, '').trim())
-    .filter(l => l.length > 2 && !/^follow\s+@/i.test(l));
+    .map(l => l.replace(/https?:\/\/\S+/g, '').replace(/#[a-zA-Z0-9_]+/g, '').trim())
+    .filter(l => l.length > 3 && !/^(link to|follow\s+@|in this video|subscribe|comment\s+)/i.test(l) && !/^[•\-*]\s*/.test(l));
 
   const ghMeta = resourceMeta.find(m => m.title);
   let cleanTitle = '';
 
-  if (ghMeta && ghMeta.title) {
-    // e.g. "GitHub - Panniantong/agent-reach: Give your AI agent eyes to see the entire internet"
+  const hasDistinctVideoTitle = rawTitle && rawTitle.length >= 6 && rawTitle !== caption.slice(0, rawTitle.length);
+  if (item.platform === 'youtube' && rawTitle) {
+    cleanTitle = rawTitle;
+  } else if (hasDistinctVideoTitle && !/^(wait until the end|watch till the end)/i.test(rawTitle)) {
+    cleanTitle = rawTitle;
+  } else if (ghMeta && ghMeta.title && /github/i.test(ghMeta.title)) {
     const ghClean = ghMeta.title
       .replace(/^GitHub\s*-\s*/i, '')
       .replace(/^[A-Za-z0-9_.-]+\/([A-Za-z0-9_.-]+)\s*:\s*/i, (_, repo) => `${repo.replace(/[-_]/g, ' ')} — `);
-    if (captionLines[0] && captionLines[0].length < 40 && !ghClean.toLowerCase().includes(captionLines[0].toLowerCase())) {
-      cleanTitle = `${captionLines[0]} — ${ghClean}`;
+    const firstCap = (captionParagraphs[0] || '').replace(/^wait until the end!?\s*[^\w]*/i, '').trim();
+    if (firstCap && firstCap.length < 38 && !ghClean.toLowerCase().includes(firstCap.toLowerCase())) {
+      cleanTitle = `${firstCap} — ${ghClean}`;
     } else {
       cleanTitle = ghClean;
     }
-  } else if (captionLines.length) {
-    const first = captionLines[0].replace(/^wait until the end!?\s*[^\w]*/i, '').trim();
-    cleanTitle = first || captionLines[0];
-    if (cleanTitle.length < 28 && captionLines[1]) {
-      cleanTitle = `${cleanTitle} — ${captionLines[1]}`;
-    }
+  } else if (captionParagraphs.length) {
+    const first = captionParagraphs[0].replace(/^wait until the end!?\s*[^\w]*/i, '').trim();
+    cleanTitle = first || captionParagraphs[0];
   } else if (rawTitle) {
     cleanTitle = rawTitle;
-  } else if (resources[0]?.url) {
-    try {
-      const u = new URL(resources[0].url);
-      const slug = u.pathname.split('/').filter(Boolean).pop() || u.hostname;
-      cleanTitle = `${slug.replace(/[-_]/g, ' ')} (${u.hostname.replace(/^www\./, '')})`;
-    } catch {
-      cleanTitle = resources[0].title || 'Shared Tool & Resource';
-    }
   } else {
     cleanTitle = `${(item.platform || 'Shared').toUpperCase()} ${item.content_type || 'Content'}`;
   }
 
-  // Capitalize first letter nicely and cap length
-  cleanTitle = cleanTitle.replace(/\s+/g, ' ').trim().slice(0, 110);
+  cleanTitle = cleanTitle.replace(/\.\.\.+$/, '').replace(/\s+/g, ' ').trim();
+  if (cleanTitle.length > 95) {
+    cleanTitle = cleanTitle.slice(0, 95).replace(/\s+\S*$/, '');
+  }
   if (cleanTitle) cleanTitle = cleanTitle[0].toUpperCase() + cleanTitle.slice(1);
 
   // 3. Detect "Comment KEYWORD" CTA
@@ -87,35 +120,57 @@ export function buildSmartLocalAnalysis({ item, resources = [], resourceMeta = [
     if (kwMatch) commentKeyword = kwMatch[1].toUpperCase();
   }
 
-  // 4. Build a clean, concise English Description (Summary & What it does)
-  const cleanCaptionBody = captionLines.join(' ').replace(/\s+/g, ' ').trim();
-  const ghDesc = ghMeta?.caption || '';
-
-  let summary = '';
-  if (cleanCaptionBody && ghDesc && !cleanCaptionBody.includes(ghDesc.slice(0, 25))) {
-    summary = `${cleanCaptionBody} — ${ghDesc}`.slice(0, 550);
-  } else if (ghDesc) {
-    summary = ghDesc.slice(0, 500);
-  } else if (cleanCaptionBody) {
-    summary = cleanCaptionBody.slice(0, 500);
-  } else if (notes) {
-    summary = notes.slice(0, 500);
-  } else {
-    summary = `Shared ${item.platform} ${item.content_type}: ${cleanTitle}.`;
+  // 4. Small, Accurate Description (summary) & Small, Accurate How-to-Use-It (what_it_does) — NO "..."
+  const cleanSentences = [];
+  for (const para of captionParagraphs) {
+    const parts = para.split(/(?<=[.!?])\s+/).map(s => s.replace(/\.\.\.+$/, '').trim()).filter(s => s.length > 12 && !/https?:\/\//i.test(s) && !/link to/i.test(s));
+    for (const p of parts) {
+      if (!cleanSentences.includes(p)) cleanSentences.push(p);
+    }
   }
 
-  let whatItDoes = '';
-  if (ghDesc) {
-    whatItDoes = ghDesc.slice(0, 450);
-  } else if (notes && notes !== summary) {
-    whatItDoes = notes.slice(0, 450);
-  } else if (resources.some(r => r.url)) {
-    const r = resources.find(x => x.url);
-    whatItDoes = `Includes direct link to ${r.title && r.title !== 'Tool / Resource Link' ? r.title : r.url} so the team can open, test, and apply it directly in your workflow.`;
-  } else if (resources.some(r => r.content)) {
-    whatItDoes = `Includes a ready-to-use prompt/resource attached below that the team can copy and run directly.`;
+  const ensurePeriod = (s) => {
+    const t = String(s || '').replace(/\.\.\.+$/g, '').trim();
+    if (!t) return '';
+    return /[.!?]$/.test(t) ? t : `${t}.`;
+  };
+
+  let summary = '';
+  const ghCleanCaption = (ghMeta?.caption || '')
+    .replace(/\.\.\.+$/g, '')
+    .replace(/^Contribute to \S+ development by creating an account on GitHub\.?/i, '')
+    .trim();
+
+  if (cleanSentences.length >= 1) {
+    summary = cleanSentences[0];
+    if (summary.length < 110 && cleanSentences[1] && (summary.length + cleanSentences[1].length) <= 210) {
+      summary = `${ ensurePeriod(summary) } ${ cleanSentences[1] }`;
+    }
+  } else if (ghCleanCaption && ghCleanCaption.length <= 220) {
+    summary = ghCleanCaption;
+  } else if (notes) {
+    summary = notes.split(/(?<=[.!?])\s+/)[0];
   } else {
-    whatItDoes = summary;
+    summary = `Covers ${cleanTitle}${item.author_name ? ` by ${item.author_name}` : ''}`;
+  }
+  summary = ensurePeriod(summary);
+
+  let whatItDoes = '';
+  const primaryRes = resources[0];
+  if (primaryRes) {
+    if (primaryRes.kind === 'prompt' || /docs\.google\.com/i.test(primaryRes.url || '')) {
+      whatItDoes = `Copy the attached prompt${primaryRes.title ? ` (${primaryRes.title})` : ''} and run it in Claude or ChatGPT with your script, voiceover, or reference assets to reproduce this workflow.`;
+    } else if (/github\.com/i.test(primaryRes.url || '')) {
+      whatItDoes = `Open the attached GitHub repository (${primaryRes.title || 'repo link'}) and install the tool or agent skill to automate this workflow directly.`;
+    } else if (primaryRes.url) {
+      whatItDoes = `Open the attached resource link (${primaryRes.title || 'tool link'}) to access the template, files, or tool shown in the video.`;
+    } else {
+      whatItDoes = `Copy the attached instructions below and apply them directly in your content production workflow.`;
+    }
+  } else if (cleanSentences.length >= 2) {
+    whatItDoes = ensurePeriod(cleanSentences[1]);
+  } else {
+    whatItDoes = `Watch the video inside the player to study the workflow and apply it to upcoming content.`;
   }
 
   // 5. Extract hashtags as clean lowercase tags
@@ -135,7 +190,7 @@ export function buildSmartLocalAnalysis({ item, resources = [], resourceMeta = [
     tags,
     key_takeaways: [],
     hook: {
-      text: captionLines[0] || cleanTitle,
+      text: cleanTitle,
       type: 'Opening Hook',
       visual: '',
       why_it_works: '',
@@ -181,7 +236,6 @@ async function apiError(res) {
   return new Error(`Gemini: ${msg}`);
 }
 
-/** Upload a local file to the Gemini Files API and wait until it is ACTIVE. */
 export async function uploadFile(absPath, mime, displayName) {
   const data = fs.readFileSync(absPath);
   const start = await gfetch(`${API}/upload/v1beta/files`, {
@@ -252,7 +306,6 @@ const str = (v, max = 4000) => (typeof v === 'string' ? v.trim().slice(0, max) :
 const arr = (v, max = 12, itemMax = 1000) => (Array.isArray(v) ? v : v ? [v] : [])
   .map(x => (typeof x === 'string' ? x.trim().slice(0, itemMax) : x)).filter(Boolean).slice(0, max);
 
-/** Make sure whatever the model returned has the exact shape the UI expects. */
 export function normalizeAnalysis(raw) {
   const r = raw && typeof raw === 'object' ? raw : {};
   const hook = r.hook && typeof r.hook === 'object' ? r.hook : { text: r.hook };
@@ -299,7 +352,7 @@ export function normalizeAnalysis(raw) {
 function buildPrompt(ctx, basis) {
   return `You are a technical content curator for Bright Mind Digital Growth Lab. Our team saves useful reels, posts, videos, prompts, and tools into a shared repository.
 
-Analyse the shared item below and return ONE JSON object in clean, concise English only (never output Bangla). Be accurate and specific: describe clearly what the reel/post/tool is about and what it does.
+Analyse the shared item below and return ONE JSON object in clean, concise English only (never output Bangla and never end descriptions with "...").
 
 WHAT YOU HAVE ACCESS TO: ${basis}.
 
@@ -308,9 +361,9 @@ ${ctx}
 
 Return JSON with these keys:
 {
-  "title": "clear, simple, descriptive title in English (max 85 characters)",
-  "summary": "2-3 clear sentences in English explaining what this content/reel/tool is about and what it does",
-  "what_it_does": "1-2 sentences in English explaining how to use this tool, prompt, or workflow",
+  "title": "accurate, clean English title (keep the original video title if it is already clear, max 85 chars)",
+  "summary": "1-2 short, accurate sentences (under 180 chars) describing what this content/tool is about",
+  "what_it_does": "1-2 short, accurate sentences (under 180 chars) explaining how to use this prompt, tool, or workflow",
   "content_type": "one of: ${Object.keys(CONTENT_TYPES).join(', ')}",
   "category": "one of: ${CATEGORIES.join(' | ')}",
   "tags": ["3-6 short lowercase English tags"],
