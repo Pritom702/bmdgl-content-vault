@@ -1,0 +1,20 @@
+{
+  "name": "bmdgl-content-vault",
+  "version": "1.0.0",
+  "description": "Bright Mind Digital Growth Lab - Content Vault: the team's central swipe file for reels, posts, videos, prompts and tools, with in-app playback and AI breakdowns (summary, hook, story, payoff).",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch server/index.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/vault.test.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "multer": "^2.0.2"
+  }
+}
+
