@@ -27,6 +27,7 @@ export function buildSmartLocalAnalysis({ item, resources = [], resourceMeta = [
 
   // 1. Accurate Category Classification using weighted keyword scoring
   const scores = {
+    'Motion Graphics & Documentary': 0,
     'Video Editing': 0,
     'AI Tools': 0,
     'Prompts': 0,
@@ -36,9 +37,12 @@ export function buildSmartLocalAnalysis({ item, resources = [], resourceMeta = [
     'Design & Thumbnails': 0,
     'Growth Strategy': 0,
   };
-  const scoreText = `${rawTitle} ${ rawTitle } ${caption} ${notes} ${resources.map(r => r.title || '').join(' ')}`.toLowerCase();
+  const scoreText = `${rawTitle} ${rawTitle} ${caption} ${notes} ${resources.map(r => r.title || '').join(' ')}`.toLowerCase();
 
-  if (/\b(edit|edited|editing|video editing|documentary|motion graphics|motion video|capcut|premiere|davinci|after effects|sfx|sound design|voiceover|mp4|frame|camera move|render)\b/i.test(scoreText)) {
+  if (/\b(documentary|motion graphics|motion-graphics|motion video|3d animation|3d motion|html canvas|after effects|camera move|cinematic motion|netflix-level|netflix-style|render|rendered to an mp4)\b/i.test(scoreText)) {
+    scores['Motion Graphics & Documentary'] += 7;
+  }
+  if (/\b(video editing|capcut|premiere|davinci|timeline|color grading|transitions|cut)\b/i.test(scoreText)) {
     scores['Video Editing'] += 5;
   }
   if (/\b(github|repo|repository|agent skill|cli|mcp|api|bot|agent-reach|youtube-agent-skill|automation tool|open-source|ai agent)\b/i.test(scoreText)) {

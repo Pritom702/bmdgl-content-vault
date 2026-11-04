@@ -25,12 +25,13 @@ export const CONTENT_TYPES = {
 };
 
 export const CATEGORIES = [
-  'Hooks & Copywriting',
-  'Storytelling & Scripts',
-  'Video Editing',
-  'Design & Thumbnails',
+  'Motion Graphics & Documentary',
   'AI Tools',
   'Prompts',
+  'Video Editing',
+  'Hooks & Copywriting',
+  'Storytelling & Scripts',
+  'Design & Thumbnails',
   'Automation',
   'Ads & Funnels',
   'Growth Strategy',

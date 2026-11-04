@@ -300,12 +300,17 @@ app.get('/api/items', (req, res) => {
   const p = { me: req.user.id };
   const q = s(req.query.q, 200);
   if (q) {
-    p.q = likeParam(q);
-    where.push(`(i.title LIKE @q ESCAPE '\\' OR i.summary LIKE @q ESCAPE '\\' OR i.what_it_does LIKE @q ESCAPE '\\' OR i.caption LIKE @q ESCAPE '\\'
-      OR i.notes LIKE @q ESCAPE '\\' OR i.hook_text LIKE @q ESCAPE '\\' OR i.author_name LIKE @q ESCAPE '\\' OR i.ai_json LIKE @q ESCAPE '\\'
-      OR i.comment_keyword LIKE @q ESCAPE '\\' OR i.url LIKE @q ESCAPE '\\'
-      OR EXISTS(SELECT 1 FROM item_tags t WHERE t.item_id = i.id AND t.tag LIKE @q ESCAPE '\\')
-      OR EXISTS(SELECT 1 FROM resources r WHERE r.item_id = i.id AND (r.title LIKE @q ESCAPE '\\' OR r.content LIKE @q ESCAPE '\\' OR r.url LIKE @q ESCAPE '\\')))`);
+    const tokens = q.split(/\s+/).filter(Boolean).slice(0, 6);
+    tokens.forEach((tok, idx) => {
+      const key = `q${idx}`;
+      p[key] = likeParam(tok);
+      where.push(`(i.title LIKE @${key} ESCAPE '\\' OR i.summary LIKE @${key} ESCAPE '\\' OR i.what_it_does LIKE @${key} ESCAPE '\\'
+        OR i.category LIKE @${key} ESCAPE '\\' OR i.platform LIKE @${key} ESCAPE '\\' OR i.caption LIKE @${key} ESCAPE '\\'
+        OR i.notes LIKE @${key} ESCAPE '\\' OR i.hook_text LIKE @${key} ESCAPE '\\' OR i.author_name LIKE @${key} ESCAPE '\\'
+        OR i.comment_keyword LIKE @${key} ESCAPE '\\' OR i.url LIKE @${key} ESCAPE '\\'
+        OR EXISTS(SELECT 1 FROM item_tags t WHERE t.item_id = i.id AND t.tag LIKE @${key} ESCAPE '\\')
+        OR EXISTS(SELECT 1 FROM resources r WHERE r.item_id = i.id AND (r.title LIKE @${key} ESCAPE '\\' OR r.content LIKE @${key} ESCAPE '\\' OR r.url LIKE @${key} ESCAPE '\\')))`);
+    });
   }
   const eq = (field, key, val) => { if (val) { p[key] = val; where.push(`${field} = @${key}`); } };
   eq('i.platform', 'platform', s(req.query.platform, 40));
@@ -634,20 +639,70 @@ app.delete('/api/comments/:cid', (req, res) => {
   res.json({ item: itemDetail(c.item_id, req.user.id) });
 });
 
-// ---------- Libraries: prompts, hooks, tools ----------
-app.get('/api/library/prompts', (req, res) => {
-  const q = s(req.query.q, 200).toLowerCase();
+// ---------- Libraries: unified resources (prompts, links & tools) ----------
+function queryUnifiedResources(q = '') {
+  const rows = db.prepare(`
+    SELECT r.id, r.kind, r.title, r.content, r.url, r.created_at,
+           i.id AS item_id, i.title AS item_title, COALESCE(i.canonical_url, i.url) AS item_url,
+           i.platform, i.category, i.summary AS item_summary, i.what_it_does AS item_usage,
+           u.name AS author
+    FROM resources r
+    JOIN items i ON i.id = r.item_id
+    LEFT JOIN users u ON u.id = r.created_by
+    WHERE i.status != 'archived'
+    ORDER BY r.id DESC
+  `).all();
+
+  const seen = new Set();
   const out = [];
-  for (const r of db.prepare(`SELECT r.id, r.title, r.content, r.url, r.created_at, i.id AS item_id, i.title AS item_title, i.platform, i.category, u.name AS author
-      FROM resources r JOIN items i ON i.id = r.item_id LEFT JOIN users u ON u.id = r.created_by WHERE r.kind = 'prompt' ORDER BY r.id DESC`).all()) {
-    out.push({ ...r, source: 'team' });
+  for (const r of rows) {
+    const dedupKey = `${r.item_id}::${(r.url || '').toLowerCase()}::${(r.title || '').toLowerCase()}`;
+    if (seen.has(dedupKey)) continue;
+    seen.add(dedupKey);
+
+    const isPrompt = r.kind === 'prompt';
+    let description = '';
+    if (isPrompt) {
+      description = r.item_summary || r.item_usage || 'Structured AI prompt ready to copy and run.';
+    } else if (r.content && r.content.length <= 240) {
+      description = r.content;
+    } else {
+      description = r.item_summary || r.item_usage || 'Shared tool or resource link.';
+    }
+
+    out.push({
+      id: r.id,
+      kind: r.kind,
+      title: r.title || r.item_title || 'Shared Resource',
+      description,
+      content: r.content || '',
+      prompt_text: isPrompt ? (r.content || '') : '',
+      url: r.url || '',
+      item_id: r.item_id,
+      item_title: r.item_title,
+      item_url: r.item_url || '',
+      platform: r.platform,
+      category: r.category,
+      author: r.author || 'Team',
+      created_at: r.created_at,
+      source: 'team',
+    });
   }
-  for (const i of db.prepare("SELECT id, title, platform, category, ai_json, created_at FROM items WHERE ai_json IS NOT NULL ORDER BY id DESC").all()) {
-    const ai = parseAi(i);
-    (ai?.prompts_detected || []).forEach((p, idx) => out.push({ id: `ai-${i.id}-${idx}`, title: '', content: p, url: '', created_at: i.created_at, item_id: i.id, item_title: i.title, platform: i.platform, category: i.category, author: 'AI-detected', source: 'ai' }));
-  }
-  const filtered = q ? out.filter(x => `${x.title} ${x.content} ${x.item_title}`.toLowerCase().includes(q)) : out;
-  res.json({ prompts: filtered });
+
+  if (!q) return out;
+  const ql = q.toLowerCase();
+  return out.filter(x => `${x.title} ${x.description} ${x.url} ${x.item_title} ${x.category}`.toLowerCase().includes(ql));
+}
+
+app.get('/api/library/resources', (req, res) => {
+  const q = s(req.query.q, 200);
+  res.json({ resources: queryUnifiedResources(q) });
+});
+
+app.get('/api/library/prompts', (req, res) => {
+  const q = s(req.query.q, 200);
+  const all = queryUnifiedResources(q).filter(r => r.kind === 'prompt');
+  res.json({ prompts: all });
 });
 
 app.get('/api/library/hooks', (req, res) => {
@@ -658,7 +713,7 @@ app.get('/api/library/hooks', (req, res) => {
     if (!ai || !ai.hook || !ai.hook.text) continue;
     out.push({
       item_id: i.id, item_title: i.title, platform: i.platform, content_type: i.content_type, category: i.category, thumb: fileUrl(i.thumb_path), usefulness: i.usefulness,
-      hook: ai.hook, payoff: ai.payoff, cta: ai.cta, story: ai.story?.structure || '', bangla_hooks: ai.bangla_hooks || [],
+      hook: ai.hook, payoff: ai.payoff, cta: ai.cta, story: ai.story?.structure || '', bangla_hooks: [],
     });
   }
   const filtered = q ? out.filter(x => JSON.stringify(x).toLowerCase().includes(q)) : out;
@@ -666,18 +721,54 @@ app.get('/api/library/hooks', (req, res) => {
 });
 
 app.get('/api/library/tools', (req, res) => {
-  const q = s(req.query.q, 200).toLowerCase();
-  const out = [];
-  for (const r of db.prepare(`SELECT r.id, r.kind, r.title, r.content, r.url, r.created_at, i.id AS item_id, i.title AS item_title, i.platform, u.name AS author
-      FROM resources r JOIN items i ON i.id = r.item_id LEFT JOIN users u ON u.id = r.created_by WHERE r.kind != 'prompt' ORDER BY r.id DESC`).all()) {
-    out.push({ ...r, source: 'team' });
+  const q = s(req.query.q, 200);
+  const all = queryUnifiedResources(q).filter(r => r.kind !== 'prompt');
+  res.json({ tools: all });
+});
+
+app.get('/api/search-suggestions', (req, res) => {
+  const q = s(req.query.q, 100).toLowerCase().trim();
+  const items = db.prepare("SELECT id, title, category, platform, summary FROM items WHERE status != 'archived' ORDER BY id DESC LIMIT 50").all();
+  const resources = queryUnifiedResources('');
+  const tagRows = db.prepare('SELECT tag, COUNT(*) AS n FROM item_tags GROUP BY tag ORDER BY n DESC, tag LIMIT 50').all();
+
+  const keywordSet = new Set([
+    'Claude',
+    'Motion Graphics',
+    'Documentary',
+    'AI Tools',
+    'YouTube Automation',
+    'AI Agent',
+    'GitHub Repository',
+    'Google Doc Prompt',
+    '3D Animation',
+    'Agent Reach',
+    'YouTube Agent Skill',
+  ]);
+  for (const t of tagRows) {
+    if (t.tag && t.tag.length > 2) keywordSet.add(t.tag);
   }
-  for (const i of db.prepare("SELECT id, title, platform, ai_json, created_at FROM items WHERE ai_json IS NOT NULL ORDER BY id DESC").all()) {
-    const ai = parseAi(i);
-    (ai?.tools_mentioned || []).forEach((t, idx) => out.push({ id: `ai-${i.id}-${idx}`, kind: 'tool', title: t.name, content: t.purpose, url: t.url, created_at: i.created_at, item_id: i.id, item_title: i.title, platform: i.platform, author: 'AI-detected', source: 'ai' }));
+  for (const it of items) {
+    if (it.category) keywordSet.add(it.category);
   }
-  const filtered = q ? out.filter(x => `${x.title} ${x.content} ${x.url} ${x.item_title}`.toLowerCase().includes(q)) : out;
-  res.json({ tools: filtered });
+
+  const keywords = [...keywordSet].filter(kw => !q || kw.toLowerCase().includes(q)).slice(0, 8);
+  const matchedCategories = CATEGORIES.filter(c => c !== 'Other' && (!q || c.toLowerCase().includes(q))).slice(0, 5);
+  const matchedItems = items
+    .filter(it => !q || `${it.title} ${it.category} ${it.summary} ${it.platform}`.toLowerCase().includes(q))
+    .slice(0, 5)
+    .map(it => ({ id: it.id, title: it.title, category: it.category, platform: it.platform }));
+  const matchedResources = resources
+    .filter(r => !q || `${r.title} ${r.description} ${r.url}`.toLowerCase().includes(q))
+    .slice(0, 4)
+    .map(r => ({ id: r.id, item_id: r.item_id, title: r.title, kind: r.kind, url: r.url }));
+
+  res.json({
+    keywords,
+    categories: matchedCategories,
+    items: matchedItems,
+    resources: matchedResources,
+  });
 });
 
 app.get('/api/tags', (_req, res) => {
@@ -686,19 +777,24 @@ app.get('/api/tags', (_req, res) => {
 
 app.get('/api/stats', (req, res) => {
   const one = (sql, ...a) => db.prepare(sql).get(...a);
+  const allRes = queryUnifiedResources('');
   res.json({
     total: one("SELECT COUNT(*) AS n FROM items WHERE status != 'archived'").n,
     thisWeek: one("SELECT COUNT(*) AS n FROM items WHERE created_at >= datetime('now','-7 days')").n,
     pending: one("SELECT COUNT(*) AS n FROM items WHERE resource_status IN ('need_comment','requested') AND status != 'archived'").n,
     testing: one("SELECT COUNT(*) AS n FROM items WHERE status = 'testing'").n,
     used: one("SELECT COUNT(*) AS n FROM items WHERE status = 'used'").n,
-    prompts: one("SELECT COUNT(*) AS n FROM resources WHERE kind = 'prompt'").n,
+    prompts: allRes.filter(r => r.kind === 'prompt').length,
+    resources: allRes.length,
     favorites: one('SELECT COUNT(*) AS n FROM favorites WHERE user_id = ?', req.user.id).n,
+    myShared: one("SELECT COUNT(*) AS n FROM items WHERE shared_by = ? AND status != 'archived'", req.user.id).n,
     analyzing: queueSize(),
     byPlatform: db.prepare("SELECT platform, COUNT(*) AS n FROM items WHERE status != 'archived' GROUP BY platform ORDER BY n DESC").all(),
     byCategory: db.prepare("SELECT category, COUNT(*) AS n FROM items WHERE status != 'archived' GROUP BY category ORDER BY n DESC").all(),
     byType: db.prepare("SELECT content_type, COUNT(*) AS n FROM items WHERE status != 'archived' GROUP BY content_type ORDER BY n DESC").all(),
-    sharers: db.prepare('SELECT u.id, u.name, u.color, COUNT(i.id) AS n FROM users u LEFT JOIN items i ON i.shared_by = u.id GROUP BY u.id ORDER BY n DESC, u.name').all(),
+    sharers: req.user.role === 'admin'
+      ? db.prepare('SELECT u.id, u.name, u.color, COUNT(i.id) AS n FROM users u LEFT JOIN items i ON i.shared_by = u.id GROUP BY u.id ORDER BY n DESC, u.name').all()
+      : [],
   });
 });
 
@@ -738,13 +834,13 @@ app.delete('/api/collections/:cid', (req, res) => {
   res.json({ ok: true });
 });
 
-// ---------- Team ----------
-app.get('/api/team', (req, res) => {
+// ---------- Team (Admin Only — Pritom) ----------
+app.get('/api/team', requireAdmin, (_req, res) => {
   const members = db.prepare(`SELECT u.id, u.name, u.email, u.role, u.color, u.created_at,
       (SELECT COUNT(*) FROM items i WHERE i.shared_by = u.id) AS shared,
       (SELECT COUNT(*) FROM comments c WHERE c.user_id = u.id) AS comments
     FROM users u ORDER BY u.created_at`).all();
-  res.json({ members, inviteCode: req.user.role === 'admin' ? inviteCode() : null });
+  res.json({ members, inviteCode: inviteCode() });
 });
 
 app.post('/api/team/invite/regenerate', requireAdmin, (_req, res) => {

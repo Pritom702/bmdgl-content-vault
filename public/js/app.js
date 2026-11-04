@@ -16,7 +16,7 @@ const TEAM_CREDENTIALS = [
 const state = {
   boot: null,
   user: null,
-  view: 'vault', // 'vault' | 'prompts' | 'tools' | 'team'
+  view: 'vault', // 'vault' | 'resources' | 'profile' | 'team'
   layout: localStorage.getItem('vault_layout') || 'grid',
   theme: localStorage.getItem('vault_theme') || 'dark',
   filters: {
@@ -43,8 +43,9 @@ const state = {
   activeTab: 'overview', // 'overview' | 'edit'
   showAddResource: false,
   stageMode: 'auto', // 'auto' | 'offline' | 'embed'
-  prompts: [],
-  tools: [],
+  resources: [],
+  profileItems: [],
+  suggestionsData: { keywords: [], categories: [], items: [], resources: [] },
   team: { members: [], inviteCode: null },
   pollTimer: null,
 };
@@ -180,19 +181,28 @@ async function init() {
 }
 
 async function loadAllData() {
-  const [stats, colls, tags] = await Promise.all([
+  const [stats, colls, tags, sug] = await Promise.all([
     api('/api/stats'),
     api('/api/collections'),
     api('/api/tags'),
+    api('/api/search-suggestions'),
   ]);
   state.stats = stats;
   state.collections = colls.collections || [];
   state.tags = tags.tags || [];
+  state.suggestionsData = sug || { keywords: [], categories: [], items: [], resources: [] };
+  if (state.view === 'resources') {
+    state.resources = (await api('/api/library/resources')).resources || [];
+  } else if (state.view === 'profile') {
+    state.profileItems = (await api('/api/items?fav=1')).items || [];
+  } else if (state.view === 'team' && state.user?.role === 'admin') {
+    state.team = await api('/api/team');
+  }
   await loadItems();
   scheduleBackgroundPoll();
 }
 
-async function loadItems() {
+async function loadItems(preserveHeader = false) {
   state.loading = true;
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(state.filters)) {
@@ -202,6 +212,14 @@ async function loadItems() {
   state.items = res.items || [];
   state.total = res.total || 0;
   state.loading = false;
+  if (preserveHeader) {
+    const mainEl = document.getElementById('page-main');
+    if (mainEl) {
+      mainEl.innerHTML = renderMainView();
+      bindMainEvents();
+      return;
+    }
+  }
   renderApp();
 }
 
@@ -381,8 +399,9 @@ function renderAuth() {
 function renderApp() {
   if (!state.user) return renderAuth();
   const app = document.getElementById('app');
-  const s = state.stats || { total: 0, favorites: 0, pending: 0, testing: 0, used: 0, prompts: 0 };
+  const s = state.stats || { total: 0, favorites: 0, pending: 0, testing: 0, used: 0, prompts: 0, resources: 0 };
   const f = state.filters;
+  const isAdmin = state.user.role === 'admin';
 
   app.innerHTML = `
     <div class="app-layout">
@@ -400,49 +419,51 @@ function renderApp() {
             <button type="button" class="top-nav-btn ${state.view === 'vault' ? 'active' : ''}" data-nav="all">
               Feed <span class="pill-count">${s.total}</span>
             </button>
-            <button type="button" class="top-nav-btn ${state.view === 'prompts' ? 'active' : ''}" data-view="prompts">
-              Prompts <span class="pill-count">${s.prompts}</span>
+            <button type="button" class="top-nav-btn ${state.view === 'resources' ? 'active' : ''}" data-view="resources">
+              Prompts, Tools &amp; Links <span class="pill-count">${s.resources ?? s.prompts ?? 0}</span>
             </button>
-            <button type="button" class="top-nav-btn ${state.view === 'tools' ? 'active' : ''}" data-view="tools">
-              Tools &amp; Links
-            </button>
-            <button type="button" class="top-nav-btn ${state.view === 'team' ? 'active' : ''}" data-view="team">
-              Team (${TEAM_CREDENTIALS.length})
-            </button>
+            ${isAdmin ? `
+              <button type="button" class="top-nav-btn ${state.view === 'team' ? 'active' : ''}" data-view="team">
+                Team (${TEAM_CREDENTIALS.length})
+              </button>
+            ` : ''}
           </nav>
 
-          <div class="search-box">
+          <div class="search-box" id="search-box-wrap">
             <span class="s-icon">⌕</span>
-            <input id="global-search" type="search" value="${esc(f.q)}" placeholder="Search reels, prompts, tools…">
-            <kbd>/</kbd>
+            <input id="global-search" type="search" value="${esc(f.q)}" placeholder="Search keywords, reels, prompts, tools…" autocomplete="off">
+            ${f.q ? `<button type="button" class="search-clear-btn" id="btn-clear-search" title="Clear search">✕</button>` : `<kbd>/</kbd>`}
+            <div id="search-suggestions" class="search-suggestions" hidden></div>
           </div>
 
           <div class="header-right">
             <button class="icon-btn ${state.layout === 'grid' ? 'active' : ''}" data-layout="grid" title="Grid view">⊞</button>
             <button class="icon-btn ${state.layout === 'list' ? 'active' : ''}" data-layout="list" title="Compact list">☰</button>
             <button class="icon-btn" id="btn-theme" title="Toggle Dark / Light mode">${state.theme === 'dark' ? '☀' : '☾'}</button>
-            <div class="user-pill">
+            <button type="button" class="user-pill-btn ${state.view === 'profile' ? 'active' : ''}" data-view="profile" title="Open your Profile & Star-Marked Saved Contents">
               <span class="avatar" style="background:#10B981">${esc(initials(state.user.name))}</span>
               <span>${esc(state.user.name.replace(/\s*\(Admin\)/i, ''))}</span>
-              <button class="icon-btn" id="btn-logout" title="Switch account / Sign out" style="padding:2px 6px;border:none;background:transparent">↪</button>
-            </div>
+              <span class="user-star-count" id="header-star-count">★ ${s.favorites || 0}</span>
+            </button>
+            <button class="icon-btn" id="btn-logout" title="Sign out">↪</button>
           </div>
         </div>
       </header>
 
-      <main class="page-container">
+      <main class="page-container" id="page-main">
         ${renderMainView()}
       </main>
     </div>
   `;
 
   bindShellEvents();
+  bindMainEvents();
 }
 
 function renderMainView() {
-  if (state.view === 'prompts') return renderPromptsView();
-  if (state.view === 'tools') return renderToolsView();
-  if (state.view === 'team') return renderTeamView();
+  if (state.view === 'resources') return renderResourcesView();
+  if (state.view === 'profile') return renderProfileView();
+  if (state.view === 'team' && state.user?.role === 'admin') return renderTeamView();
   return renderVaultView();
 }
 
@@ -634,26 +655,43 @@ function renderItemRow(item) {
   `;
 }
 
-// ---------- Libraries ----------
-function renderPromptsView() {
+// ---------- Merged Prompts, Tools & Links View ----------
+function renderResourcesView() {
   return `
-    <div style="margin-bottom:18px">
-      <h2 style="margin:0;font-size:20px;font-weight:700">Prompts Library</h2>
-      <p style="margin:4px 0 0;color:var(--mute)">All AI prompts shared by the team—ready to copy in one click.</p>
+    <div style="margin-bottom:20px">
+      <h2 style="margin:0;font-size:20px;font-weight:700">Prompts, Tools &amp; Links (${state.resources.length})</h2>
+      <p style="margin:4px 0 0;color:var(--mute)">All prompts, GitHub repositories, Google Docs, and tools in one place — with links, title, and a short description.</p>
     </div>
-    ${state.prompts.length === 0 ? `<div class="empty-state"><h3>No prompts saved yet</h3><p style="color:var(--mute)">Paste a prompt in the Quick Drop bar on the Feed to add one.</p></div>` : `
+    ${state.resources.length === 0 ? `
+      <div class="empty-state">
+        <h3>No prompts, tools, or links saved yet</h3>
+        <p style="color:var(--mute)">Paste a link or prompt in the Quick Drop bar on the Feed to add one.</p>
+      </div>
+    ` : `
       <div class="vault-grid">
-        ${state.prompts.map((p, idx) => `
+        ${state.resources.map((r, idx) => `
           <div class="lib-card">
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <span class="cat-badge">${esc(p.category || 'Prompt')}</span>
-              <span style="font-size:11.5px;color:var(--mute)">Shared by ${esc(p.author || 'Team')}</span>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+              <span class="cat-badge">${esc(r.category || RESOURCE_KINDS[r.kind] || 'Resource')}</span>
+              <span class="type-pill" style="padding:2px 8px">${esc(RESOURCE_KINDS[r.kind] || r.kind || 'Link')}</span>
             </div>
-            <h3 style="margin:0;font-size:15.5px;font-weight:700">${esc(p.title || p.item_title)}</h3>
-            <div class="prompt-block">${esc(p.content)}</div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:auto;padding-top:8px">
-              <button class="btn btn-sm" data-open-item="${p.item_id}">▶ Watch Video</button>
-              <button class="btn btn-sm btn-primary" data-copy-prompt="${idx}">Copy Prompt</button>
+
+            <h3 style="margin:0;font-size:16px;font-weight:700;line-height:1.38;color:var(--ink)">${esc(r.title)}</h3>
+
+            <p style="margin:0;font-size:13.5px;color:var(--ink-2);line-height:1.55">${esc(r.description)}</p>
+
+            ${r.url ? `
+              <div class="res-link-row" title="${esc(r.url)}">
+                <a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.url)}</a>
+              </div>
+            ` : ''}
+
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:auto;padding-top:10px;border-top:1px solid var(--border)">
+              <button type="button" class="btn btn-sm" data-open-item="${r.item_id}">▶ Watch Video</button>
+              <div style="display:flex;gap:6px">
+                ${r.prompt_text ? `<button type="button" class="btn btn-sm" data-copy-res="${idx}">Copy Prompt</button>` : ''}
+                ${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener" class="btn btn-sm btn-primary">↗ Open Link</a>` : ''}
+              </div>
             </div>
           </div>
         `).join('')}
@@ -662,29 +700,48 @@ function renderPromptsView() {
   `;
 }
 
-function renderToolsView() {
+// ---------- User Profile & Star-Marked Saved Contents ----------
+function renderProfileView() {
+  const s = state.stats || { favorites: 0, myShared: 0 };
+  const cleanName = (state.user?.name || 'Member').replace(/\s*\(Admin\)/i, '');
   return `
-    <div style="margin-bottom:18px">
-      <h2 style="margin:0;font-size:20px;font-weight:700">Tools, GitHub Repos &amp; Resource Links</h2>
-      <p style="margin:4px 0 0;color:var(--mute)">Every tool, GitHub repository, Drive folder, and Skool resource shared by the team.</p>
+    <div class="profile-header-card">
+      <div style="display:flex;align-items:center;gap:16px">
+        <span class="avatar" style="width:52px;height:52px;font-size:20px;border-radius:12px;background:#10B981">${esc(initials(cleanName))}</span>
+        <div>
+          <h2 style="margin:0;font-size:20px;font-weight:800">${esc(cleanName)}</h2>
+          <div style="font-size:13px;color:var(--mute);margin-top:2px">${esc(state.user?.email || '')}</div>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div class="info-box" style="padding:10px 16px;text-align:center">
+          <div style="font-size:18px;font-weight:800;color:var(--gold)">★ ${state.profileItems.length}</div>
+          <div style="font-size:11px;font-weight:600;color:var(--mute);text-transform:uppercase">Star-Marked Saved</div>
+        </div>
+        <div class="info-box" style="padding:10px 16px;text-align:center">
+          <div style="font-size:18px;font-weight:800;color:var(--accent)">${s.myShared || 0}</div>
+          <div style="font-size:11px;font-weight:600;color:var(--mute);text-transform:uppercase">Shared by You</div>
+        </div>
+      </div>
     </div>
-    ${state.tools.length === 0 ? `<div class="empty-state"><h3>No tools saved yet</h3></div>` : `
+
+    <div style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <h3 style="margin:0;font-size:18px;font-weight:700">★ Your Star-Marked Saved Contents (${state.profileItems.length})</h3>
+        <p style="margin:4px 0 0;color:var(--mute);font-size:13px">Every video, reel, prompt, or tool you press the ★ Star button on is automatically saved to your account here.</p>
+      </div>
+    </div>
+
+    ${state.profileItems.length === 0 ? `
+      <div class="empty-state">
+        <h3>No star-marked contents yet</h3>
+        <p style="color:var(--mute)">Press the <strong>☆</strong> star button on any video or card in the Feed and it will automatically be saved to your profile.</p>
+        <button type="button" class="btn btn-primary" data-nav="all">Browse Feed →</button>
+      </div>
+    ` : `
       <div class="vault-grid">
-        ${state.tools.map(t => `
-          <div class="lib-card">
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <span class="cat-badge">${esc(RESOURCE_KINDS[t.kind] || t.kind || 'Tool')}</span>
-              <span style="font-size:11.5px;color:var(--mute)">${esc(t.author || 'Team')}</span>
-            </div>
-            <h3 style="margin:0;font-size:16px;font-weight:700">${esc(t.title || 'Resource')}</h3>
-            ${t.content ? `<p style="margin:0;font-size:13px;color:var(--ink-2);line-height:1.5">${esc(t.content)}</p>` : ''}
-            ${t.url ? `<div style="font-family:var(--font-mono);font-size:11.5px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(t.url)}</div>` : ''}
-            <div style="display:flex;gap:8px;margin-top:auto;padding-top:10px">
-              <button class="btn btn-sm" data-open-item="${t.item_id}">▶ Watch Video</button>
-              ${t.url ? `<a href="${esc(t.url)}" target="_blank" rel="noopener" class="btn btn-sm btn-primary">↗ Open Link</a>` : ''}
-            </div>
-          </div>
-        `).join('')}
+        ${state.profileItems.map(renderItemCard).join('')}
       </div>
     `}
   `;
@@ -1107,6 +1164,7 @@ function bindModalEvents(root, item) {
   root.querySelector('#detail-fav')?.addEventListener('click', async () => {
     const res = await api(`/api/items/${item.id}/favorite`, { method: 'POST' });
     state.activeItem.favorite = res.favorite;
+    toast(res.favorite ? '★ Saved to your Profile!' : 'Removed from your Profile');
     renderModal();
     loadAllData();
   });
@@ -1189,16 +1247,208 @@ function bindModalEvents(root, item) {
   });
 }
 
-// ---------- Shell Events ----------
+// ---------- Live Search Keyword Suggestions ----------
+function renderSearchSuggestions(rawQuery = '') {
+  const box = document.getElementById('search-suggestions');
+  if (!box) return;
+  const q = rawQuery.trim().toLowerCase();
+  const baseKeywords = state.suggestionsData?.keywords?.length
+    ? state.suggestionsData.keywords
+    : ['Claude', 'Motion Graphics', 'Documentary', 'AI Tools', 'YouTube Automation', 'AI Agent', 'GitHub Repository', 'Google Doc Prompt', '3D Animation', 'Agent Reach', 'YouTube Agent Skill'];
+
+  const matchedKeywords = baseKeywords.filter(k => !q || k.toLowerCase().includes(q)).slice(0, 8);
+  const matchedCats = CATEGORIES.filter(c => c !== 'Other' && (!q || c.toLowerCase().includes(q))).slice(0, 4);
+  const allItems = state.suggestionsData?.items || state.items || [];
+  const matchedItems = allItems
+    .filter(it => !q || `${it.title || ''} ${it.category || ''} ${it.platform || ''}`.toLowerCase().includes(q))
+    .slice(0, 4);
+
+  if (!matchedKeywords.length && !matchedCats.length && !matchedItems.length) {
+    box.innerHTML = `<div style="padding:8px 10px;font-size:12.5px;color:var(--mute)">Press Enter to search for "<strong>${esc(rawQuery)}</strong>"</div>`;
+    box.hidden = false;
+    return;
+  }
+
+  box.innerHTML = `
+    ${matchedKeywords.length ? `
+      <div class="sug-section">
+        <div class="sug-head">Keyword Suggestions</div>
+        <div class="sug-kw-wrap">
+          ${matchedKeywords.map(kw => `
+            <button type="button" class="sug-kw-pill" data-sug-kw="${esc(kw)}">
+              <span style="color:var(--accent)">⌕</span> ${esc(kw)}
+            </button>
+          `).join('')}
+        </div>
+      </div>
+    ` : ''}
+
+    ${matchedCats.length ? `
+      <div class="sug-section">
+        <div class="sug-head">Categories</div>
+        <div class="sug-kw-wrap">
+          ${matchedCats.map(cat => `
+            <button type="button" class="sug-kw-pill" data-sug-cat="${esc(cat)}">
+              <span style="color:var(--accent)">▤</span> ${esc(cat)}
+            </button>
+          `).join('')}
+        </div>
+      </div>
+    ` : ''}
+
+    ${matchedItems.length ? `
+      <div class="sug-section">
+        <div class="sug-head">Matching Content</div>
+        ${matchedItems.map(it => `
+          <button type="button" class="sug-item-row" data-sug-item="${it.id}">
+            <span style="font-weight:600;line-height:1.35">${esc(it.title)}</span>
+            <span class="cat-badge" style="flex-shrink:0">${esc(it.category || 'Vault')}</span>
+          </button>
+        `).join('')}
+      </div>
+    ` : ''}
+  `;
+  box.hidden = false;
+
+  box.querySelectorAll('[data-sug-kw]').forEach(btn => {
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const kw = btn.dataset.sugKw;
+      state.filters.q = kw;
+      state.filters.category = '';
+      state.view = 'vault';
+      box.hidden = true;
+      loadItems();
+    });
+  });
+
+  box.querySelectorAll('[data-sug-cat]').forEach(btn => {
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      state.filters.category = btn.dataset.sugCat;
+      state.filters.q = '';
+      state.view = 'vault';
+      box.hidden = true;
+      loadItems();
+    });
+  });
+
+  box.querySelectorAll('[data-sug-item]').forEach(btn => {
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      box.hidden = true;
+      openItemDetail(Number(btn.dataset.sugItem));
+    });
+  });
+}
+
+// ---------- Shell & Main Events ----------
 let searchTimer = null;
 function bindShellEvents() {
   const app = document.getElementById('app');
 
-  app.querySelector('#btn-open-upload')?.addEventListener('click', () => openUploadModal());
+  app.querySelectorAll('.top-header [data-nav]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.view = 'vault';
+      for (const k of Object.keys(state.filters)) if (k !== 'sort') state.filters[k] = '';
+      loadItems();
+    });
+  });
 
-  const dropForm = app.querySelector('#instant-drop-form');
-  const qcUrl = app.querySelector('#qc-url');
-  const qcHint = app.querySelector('#qc-live-hint');
+  app.querySelectorAll('.top-header [data-view]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const v = btn.dataset.view;
+      if (v === 'team' && state.user?.role !== 'admin') return;
+      state.view = v;
+      if (v === 'resources') {
+        state.resources = (await api('/api/library/resources')).resources || [];
+      } else if (v === 'profile') {
+        state.profileItems = (await api('/api/items?fav=1')).items || [];
+      } else if (v === 'team') {
+        state.team = await api('/api/team');
+      }
+      renderApp();
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    });
+  });
+
+  const searchInput = app.querySelector('#global-search');
+  const sugBox = app.querySelector('#search-suggestions');
+
+  searchInput?.addEventListener('focus', () => {
+    renderSearchSuggestions(searchInput.value);
+  });
+
+  searchInput?.addEventListener('input', (e) => {
+    const val = e.target.value;
+    state.filters.q = val;
+    renderSearchSuggestions(val);
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(async () => {
+      if (state.view !== 'vault') {
+        state.view = 'vault';
+      }
+      await loadItems(true);
+    }, 150);
+  });
+
+  searchInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (sugBox) sugBox.hidden = true;
+      state.view = 'vault';
+      loadItems(true);
+    } else if (e.key === 'Escape') {
+      if (sugBox) sugBox.hidden = true;
+      searchInput.blur();
+    }
+  });
+
+  searchInput?.addEventListener('blur', () => {
+    setTimeout(() => {
+      const b = document.getElementById('search-suggestions');
+      if (b) b.hidden = true;
+    }, 160);
+  });
+
+  app.querySelector('#btn-clear-search')?.addEventListener('click', () => {
+    state.filters.q = '';
+    state.view = 'vault';
+    loadItems();
+  });
+
+  app.querySelectorAll('[data-layout]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.layout = btn.dataset.layout;
+      localStorage.setItem('vault_layout', state.layout);
+      renderApp();
+    });
+  });
+
+  app.querySelector('#btn-theme')?.addEventListener('click', () => {
+    state.theme = state.theme === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('vault_theme', state.theme);
+    document.documentElement.setAttribute('data-theme', state.theme);
+    renderApp();
+  });
+
+  app.querySelector('#btn-logout')?.addEventListener('click', async () => {
+    await api('/api/auth/logout', { method: 'POST' });
+    state.user = null;
+    authMode = 'login';
+    renderAuth();
+  });
+}
+
+function bindMainEvents() {
+  const main = document.getElementById('page-main') || document.getElementById('app');
+  if (!main) return;
+
+  main.querySelector('#btn-open-upload')?.addEventListener('click', () => openUploadModal());
+
+  const dropForm = main.querySelector('#instant-drop-form');
+  const qcUrl = main.querySelector('#qc-url');
+  const qcHint = main.querySelector('#qc-live-hint');
 
   qcUrl?.addEventListener('input', () => {
     const info = analyzeUrl(extractUrl(qcUrl.value) || qcUrl.value.trim());
@@ -1210,13 +1460,13 @@ function bindShellEvents() {
 
   dropForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const rawUrl = (app.querySelector('#qc-url')?.value || '').trim();
-    const rawPrompt = (app.querySelector('#qc-prompt')?.value || '').trim();
+    const rawUrl = (main.querySelector('#qc-url')?.value || '').trim();
+    const rawPrompt = (main.querySelector('#qc-prompt')?.value || '').trim();
     if (!rawUrl && !rawPrompt) {
       toast('Paste a Reel/video link or a prompt first!', true);
       return;
     }
-    const btn = app.querySelector('#qc-submit-btn');
+    const btn = main.querySelector('#qc-submit-btn');
     btn.disabled = true;
     btn.textContent = 'Saving…';
     try {
@@ -1243,10 +1493,10 @@ function bindShellEvents() {
     for (const k of Object.keys(state.filters)) if (k !== 'sort') state.filters[k] = '';
     loadItems();
   };
-  app.querySelector('#btn-clear-filters')?.addEventListener('click', resetFilters);
-  app.querySelector('#btn-empty-reset')?.addEventListener('click', resetFilters);
+  main.querySelector('#btn-clear-filters')?.addEventListener('click', resetFilters);
+  main.querySelector('#btn-empty-reset')?.addEventListener('click', resetFilters);
 
-  app.querySelectorAll('[data-nav]').forEach(btn => {
+  main.querySelectorAll('[data-nav]').forEach(btn => {
     btn.addEventListener('click', () => {
       state.view = 'vault';
       for (const k of Object.keys(state.filters)) if (k !== 'sort' && k !== 'q') state.filters[k] = '';
@@ -1257,25 +1507,14 @@ function bindShellEvents() {
     });
   });
 
-  app.querySelectorAll('[data-view]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const v = btn.dataset.view;
-      state.view = v;
-      if (v === 'prompts') state.prompts = (await api('/api/library/prompts')).prompts || [];
-      else if (v === 'tools') state.tools = (await api('/api/library/tools')).tools || [];
-      else if (v === 'team') state.team = await api('/api/team');
-      renderApp();
-    });
-  });
-
-  app.querySelectorAll('[data-cat]').forEach(btn => {
+  main.querySelectorAll('[data-cat]').forEach(btn => {
     btn.addEventListener('click', () => {
       state.filters.category = btn.dataset.cat;
       loadItems();
     });
   });
 
-  app.querySelectorAll('[data-plat]').forEach(btn => {
+  main.querySelectorAll('[data-plat]').forEach(btn => {
     btn.addEventListener('click', () => {
       state.filters.fav = '';
       state.filters.pending = '';
@@ -1284,45 +1523,9 @@ function bindShellEvents() {
     });
   });
 
-  app.querySelector('#flt-sort')?.addEventListener('change', (e) => { state.filters.sort = e.target.value; loadItems(); });
+  main.querySelector('#flt-sort')?.addEventListener('change', (e) => { state.filters.sort = e.target.value; loadItems(); });
 
-  const searchInput = app.querySelector('#global-search');
-  searchInput?.addEventListener('input', (e) => {
-    state.filters.q = e.target.value;
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(async () => {
-      if (state.view === 'vault') {
-        const pos = e.target.selectionStart;
-        await loadItems();
-        const el = document.getElementById('global-search');
-        if (el) { el.focus(); el.setSelectionRange(pos, pos); }
-      }
-    }, 220);
-  });
-
-  app.querySelectorAll('[data-layout]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      state.layout = btn.dataset.layout;
-      localStorage.setItem('vault_layout', state.layout);
-      renderApp();
-    });
-  });
-
-  app.querySelector('#btn-theme')?.addEventListener('click', () => {
-    state.theme = state.theme === 'dark' ? 'light' : 'dark';
-    localStorage.setItem('vault_theme', state.theme);
-    document.documentElement.setAttribute('data-theme', state.theme);
-    renderApp();
-  });
-
-  app.querySelector('#btn-logout')?.addEventListener('click', async () => {
-    await api('/api/auth/logout', { method: 'POST' });
-    state.user = null;
-    authMode = 'login';
-    renderAuth();
-  });
-
-  app.querySelectorAll('.vcard').forEach(card => {
+  main.querySelectorAll('.vcard').forEach(card => {
     const vid = card.querySelector('video[data-hover-video]');
     if (vid) {
       card.addEventListener('mouseenter', () => { vid.play().catch(() => {}); });
@@ -1330,14 +1533,14 @@ function bindShellEvents() {
     }
   });
 
-  app.querySelectorAll('[data-open-item]').forEach(el => {
+  main.querySelectorAll('[data-open-item]').forEach(el => {
     el.addEventListener('click', (e) => {
       if (e.target.closest('button, a')) return;
       openItemDetail(Number(el.dataset.openItem));
     });
   });
 
-  app.querySelectorAll('[data-upvote]').forEach(btn => {
+  main.querySelectorAll('[data-upvote]').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       await api(`/api/items/${btn.dataset.upvote}/upvote`, { method: 'POST' });
@@ -1345,22 +1548,23 @@ function bindShellEvents() {
     });
   });
 
-  app.querySelectorAll('[data-fav]').forEach(btn => {
+  main.querySelectorAll('[data-fav]').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      await api(`/api/items/${btn.dataset.fav}/favorite`, { method: 'POST' });
-      loadAllData();
+      const res = await api(`/api/items/${btn.dataset.fav}/favorite`, { method: 'POST' });
+      toast(res.favorite ? '★ Saved to your Profile!' : 'Removed from your Profile');
+      await loadAllData();
     });
   });
 
-  app.querySelectorAll('[data-copy-prompt]').forEach(btn => {
+  main.querySelectorAll('[data-copy-res]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const p = state.prompts[Number(btn.dataset.copyPrompt)];
-      if (p) copyText(p.content, 'Prompt copied');
+      const r = state.resources[Number(btn.dataset.copyRes)];
+      if (r && r.prompt_text) copyText(r.prompt_text, 'Prompt copied to clipboard');
     });
   });
 
-  app.querySelectorAll('[data-copy-text]').forEach(btn => {
+  main.querySelectorAll('[data-copy-text]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       copyText(btn.dataset.copyText);
