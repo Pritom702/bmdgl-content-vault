@@ -74,7 +74,7 @@ test('URL analyzer recognizes Facebook, Instagram, YouTube, TikTok, Skool and Go
   assert.equal(skool.contentType, 'course');
 });
 
-test('Bootstrap, Seeded login, Seeded items, Create item, Resources, Libraries & Export', async () => {
+test('Bootstrap, Seeded team login, Create item, Primary Resource, Libraries & Export', async () => {
   const b0 = await req('/api/bootstrap');
   assert.equal(b0.status, 200);
   assert.equal(b0.data.needsSetup, false);
@@ -86,28 +86,30 @@ test('Bootstrap, Seeded login, Seeded items, Create item, Resources, Libraries &
   assert.equal(login.status, 200);
   assert.equal(login.data.user.role, 'admin');
 
-  const list = await req('/api/items');
-  assert.equal(list.status, 200);
-  assert.ok(list.data.items.length >= 4, 'Seeded swipe file items should exist');
+  const team = await req('/api/team');
+  assert.equal(team.status, 200);
+  assert.equal(team.data.members.length, 7);
 
-  // Create a new shared Reel with prompt & comment keyword
+  // Create a shared Reel with prompt & tool link
   const created = await req('/api/items', {
     method: 'POST',
     body: {
       url: 'https://www.instagram.com/reel/C99TestReel/',
-      title: 'Test F-Commerce Hook Formula Reel',
-      category: 'Hooks & Copywriting',
-      comment_keyword: 'HOOKS',
-      notes: 'Great 3-second visual hook for Bangladeshi page owners.',
-      tags: 'hooks, bangla, test',
+      title: 'YouTube Agent Skill — AI Agent Tool for YouTube Automation',
+      category: 'AI Tools',
+      comment_keyword: 'SKILL',
+      notes: 'Great open-source AI agent skill for YouTube research.',
+      tags: 'ai-agent, youtube, github',
       resources: [
-        { kind: 'prompt', title: 'Hook Generator Prompt', content: 'Write 5 Bangla hooks for F-commerce...', url: '' },
+        { kind: 'prompt', title: 'Agent Setup Prompt', content: 'Run the YouTube Agent Skill to fetch transcripts.', url: '' },
+        { kind: 'tool', title: 'YouTube Agent Skill — GitHub Repository', content: 'AI agent skill for YouTube automation.', url: 'https://github.com/Jakeschincariol/youtube-agent-skill' },
       ],
     },
   });
   assert.equal(created.status, 201);
   assert.equal(created.data.item.platform, 'instagram');
-  assert.equal(created.data.item.resources_list.length, 1);
+  assert.equal(created.data.item.resources_list.length, 2);
+  assert.equal(created.data.item.primary_resource.title, 'Agent Setup Prompt');
 
   const id = created.data.item.id;
   const up = await req(`/api/items/${id}/upvote`, { method: 'POST' });
@@ -119,13 +121,13 @@ test('Bootstrap, Seeded login, Seeded items, Create item, Resources, Libraries &
 
   const prompts = await req('/api/library/prompts');
   assert.equal(prompts.status, 200);
-  assert.ok(prompts.data.prompts.length >= 3);
+  assert.equal(prompts.data.prompts.length, 1);
 
-  const hooks = await req('/api/library/hooks');
-  assert.equal(hooks.status, 200);
-  assert.ok(hooks.data.hooks.length >= 3);
+  const tools = await req('/api/library/tools');
+  assert.equal(tools.status, 200);
+  assert.equal(tools.data.tools.length, 1);
 
   const csv = await req('/api/export.csv');
   assert.equal(csv.status, 200);
-  assert.ok(csv.data.includes('Test F-Commerce Hook Formula Reel'));
+  assert.ok(csv.data.includes('YouTube Agent Skill'));
 });

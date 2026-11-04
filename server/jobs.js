@@ -19,10 +19,6 @@ const touch = (id, fields) => {
     .run(...keys.map(k => fields[k]), id);
 };
 
-/**
- * Queue background processing for an item.
- * steps: { meta: bool, archive: bool, ai: bool }
- */
 export function enqueue(id, steps = { meta: true, archive: true, ai: true }) {
   if (globalThis.process.env.DISABLE_JOBS === '1') return;
   const key = `${id}`;
@@ -73,7 +69,10 @@ async function process({ id, steps }) {
       item = getItem(id);
       if (!item) return;
       const upd = {};
-      if (meta.title && item.title_source !== 'user' && !item.title) { upd.title = meta.title; upd.title_source = 'meta'; }
+      if (meta.title && item.title_source !== 'user') {
+        upd.title = meta.title;
+        upd.title_source = 'meta';
+      }
       if (meta.caption && !item.caption) upd.caption = meta.caption;
       if (meta.author_name && !item.author_name) upd.author_name = meta.author_name;
       if (meta.author_url && !item.author_url) upd.author_url = meta.author_url;
@@ -118,13 +117,33 @@ async function process({ id, steps }) {
     if (t) touch(id, { thumb_path: t });
   }
 
-  // 3. AI analysis (or instant smart auto-breakdown when GEMINI_API_KEY is not set)
+  // 3. Auto-generate clean Title & Description (from video/page + any attached tool/GitHub URL)
   if (steps.ai) {
     touch(id, { ai_status: 'processing', ai_error: null });
     try {
       item = getItem(id);
       if (!item) return;
-      const resources = db.prepare('SELECT kind, title, content, url FROM resources WHERE item_id = ? ORDER BY id').all(id);
+      const resources = db.prepare('SELECT id, kind, title, content, url FROM resources WHERE item_id = ? ORDER BY id').all(id);
+      const resourceMeta = [];
+      for (const r of resources) {
+        if (r.url) {
+          try {
+            const rInfo = analyzeUrl(r.url);
+            const rm = await fetchMetadata(r.url, rInfo);
+            if (rm && (rm.title || rm.caption)) {
+              resourceMeta.push(rm);
+              if ((!r.title || r.title === 'Tool / Resource Link') && rm.title) {
+                const cleanResTitle = rm.title.replace(/^GitHub\s*-\s*/i, '').slice(0, 120);
+                db.prepare('UPDATE resources SET title = ?, content = COALESCE(NULLIF(content, ""), ?) WHERE id = ?')
+                  .run(cleanResTitle, (rm.caption || '').slice(0, 500), r.id);
+                r.title = cleanResTitle;
+                if (!r.content && rm.caption) r.content = rm.caption.slice(0, 500);
+              }
+            }
+          } catch { /* ignore */ }
+        }
+      }
+
       const sharer = item.shared_by ? db.prepare('SELECT name FROM users WHERE id = ?').get(item.shared_by) : null;
       let analysis;
       let source = 'smart-auto';
@@ -144,7 +163,7 @@ async function process({ id, steps }) {
         analysis = res.analysis;
         source = res.source;
       } else {
-        analysis = buildSmartLocalAnalysis({ item, resources });
+        analysis = buildSmartLocalAnalysis({ item, resources, resourceMeta });
       }
       const cur = getItem(id);
       if (!cur) return;
@@ -158,7 +177,10 @@ async function process({ id, steps }) {
         hook_text: analysis.hook.text || null,
         usefulness: analysis.usefulness,
       };
-      if (cur.title_source !== 'user' && analysis.title) { upd.title = analysis.title; upd.title_source = 'ai'; }
+      if (cur.title_source !== 'user' && analysis.title) {
+        upd.title = analysis.title;
+        upd.title_source = 'ai';
+      }
       if (!cur.category_locked && analysis.category) upd.category = analysis.category;
       if (analysis.content_type && (cur.content_type === 'other' || cur.content_type === 'article') && cur.platform !== 'web') upd.content_type = analysis.content_type;
       if (!cur.comment_keyword && analysis.comment_keyword) {
@@ -174,7 +196,6 @@ async function process({ id, steps }) {
   }
 }
 
-/** On boot: re-queue anything that was interrupted by a restart. */
 export function resumeInterrupted() {
   const rows = db.prepare(`SELECT id, ai_status, archive_status FROM items WHERE ai_status IN ('pending','processing') OR archive_status = 'processing'`).all();
   for (const r of rows) {
@@ -183,4 +204,3 @@ export function resumeInterrupted() {
   if (!aiEnabled()) db.prepare(`UPDATE items SET ai_status = 'disabled' WHERE ai_status IN ('pending','processing')`).run();
   if (rows.length) console.log(`[jobs] resumed ${rows.length} interrupted item(s)`);
 }
-

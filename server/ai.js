@@ -9,62 +9,119 @@ export function aiEnabled() {
 }
 
 /**
- * Smart instant auto-breakdown that works even when GEMINI_API_KEY is not configured.
- * Extracts clean title, summary, what_it_does, category, hook, story beats, payoff,
- * comment keyword ("comment X"), tools, and Bangla hook adaptations from the link & text.
+ * Clean, accurate English Title & Description generator when GEMINI_API_KEY is not configured.
+ * Combines the Reel/post caption, page title, and any attached tool/GitHub/prompt metadata
+ * into a clear, human-readable English title and description.
  */
-export function buildSmartLocalAnalysis({ item, resources = [] }) {
-  const rawTitle = (item.title || '').replace(/^\d+\s+reactions?\s*[·•|]\s*\d+\s+comments?\s*[|·•]\s*/i, '').trim();
+export function buildSmartLocalAnalysis({ item, resources = [], resourceMeta = [] }) {
+  const rawTitle = (item.title || '')
+    .replace(/^\d+[\d,.KMkm]*\s+(?:views?|reactions?|likes?)\s*[·•|-]*\s*/i, '')
+    .replace(/^(?:Tool\s*\/\s*Resource\s*Link|Shared\s*Prompt\s*\/\s*Instructions|Shared\s*Content|Facebook\s*Reel|Instagram\s*Reel)$/i, '')
+    .trim();
+
   const caption = (item.caption || '').trim();
   const notes = (item.notes || '').trim();
   const resText = resources.map(r => `${r.title || ''} ${r.content || ''} ${r.url || ''}`).join('\n');
-  const fullText = `${rawTitle}\n${caption}\n${notes}\n${resText}`.trim();
+  const resMetaText = resourceMeta.map(m => `${m.title || ''} ${m.caption || ''}`).join('\n');
+  const fullText = `${rawTitle}\n${caption}\n${notes}\n${resText}\n${resMetaText}`.trim();
   const lower = fullText.toLowerCase();
 
   // 1. Detect category
-  let category = 'Growth Strategy';
-  if (/prompt|midjourney|chatgpt|claude|gemini|llm|system prompt/i.test(lower)) category = 'Prompts';
-  else if (/\b(ai|automation|agent|mcp|github|repo|tool|api|bot|workflow)\b/i.test(lower)) category = 'AI Tools';
+  let category = 'AI Tools';
+  if (/prompt|midjourney|system prompt|mega-prompt/i.test(lower) && !/github\.com/i.test(lower)) category = 'Prompts';
+  else if (/\b(ai|automation|agent|skill|mcp|github|repo|tool|api|bot|workflow|claude|chatgpt|gemini|llm)\b/i.test(lower)) category = 'AI Tools';
   else if (/\b(hook|scroll|headline|copywriting|opening)\b/i.test(lower)) category = 'Hooks & Copywriting';
   else if (/\b(edit|capcut|premiere|davinci|sfx|sound|audio|timeline|motion)\b/i.test(lower)) category = 'Video Editing';
   else if (/\b(story|script|narrative|dialogue)\b/i.test(lower)) category = 'Storytelling & Scripts';
   else if (/\b(ad|boost|meta ads|funnel|conversion|audit|roas|lead)\b/i.test(lower)) category = 'Ads & Funnels';
   else if (/\b(design|canva|thumbnail|carousel|poster)\b/i.test(lower)) category = 'Design & Thumbnails';
+  else category = 'Growth Strategy';
 
-  // 2. Clean title
-  const clauses = (rawTitle || caption || notes || 'Shared Content').split(/[\n.!]|(?<=\?)\s+/).map(s => s.trim()).filter(Boolean);
-  let cleanTitle = clauses[0] || '';
-  if (cleanTitle.length < 28 && clauses[1]) cleanTitle = `${cleanTitle} — ${clauses[1]}`;
-  cleanTitle = cleanTitle.slice(0, 110) || `${item.platform.toUpperCase()} ${item.content_type}`;
+  // 2. Build a clean, accurate English Title
+  const captionLines = caption
+    .split(/\n+/)
+    .map(l => l.replace(/#[a-zA-Z0-9_]+/g, '').trim())
+    .filter(l => l.length > 2 && !/^follow\s+@/i.test(l));
+
+  const ghMeta = resourceMeta.find(m => m.title);
+  let cleanTitle = '';
+
+  if (ghMeta && ghMeta.title) {
+    // e.g. "GitHub - Panniantong/agent-reach: Give your AI agent eyes to see the entire internet"
+    const ghClean = ghMeta.title
+      .replace(/^GitHub\s*-\s*/i, '')
+      .replace(/^[A-Za-z0-9_.-]+\/([A-Za-z0-9_.-]+)\s*:\s*/i, (_, repo) => `${repo.replace(/[-_]/g, ' ')} — `);
+    if (captionLines[0] && captionLines[0].length < 40 && !ghClean.toLowerCase().includes(captionLines[0].toLowerCase())) {
+      cleanTitle = `${captionLines[0]} — ${ghClean}`;
+    } else {
+      cleanTitle = ghClean;
+    }
+  } else if (captionLines.length) {
+    const first = captionLines[0].replace(/^wait until the end!?\s*[^\w]*/i, '').trim();
+    cleanTitle = first || captionLines[0];
+    if (cleanTitle.length < 28 && captionLines[1]) {
+      cleanTitle = `${cleanTitle} — ${captionLines[1]}`;
+    }
+  } else if (rawTitle) {
+    cleanTitle = rawTitle;
+  } else if (resources[0]?.url) {
+    try {
+      const u = new URL(resources[0].url);
+      const slug = u.pathname.split('/').filter(Boolean).pop() || u.hostname;
+      cleanTitle = `${slug.replace(/[-_]/g, ' ')} (${u.hostname.replace(/^www\./, '')})`;
+    } catch {
+      cleanTitle = resources[0].title || 'Shared Tool & Resource';
+    }
+  } else {
+    cleanTitle = `${(item.platform || 'Shared').toUpperCase()} ${item.content_type || 'Content'}`;
+  }
+
+  // Capitalize first letter nicely and cap length
+  cleanTitle = cleanTitle.replace(/\s+/g, ' ').trim().slice(0, 110);
+  if (cleanTitle) cleanTitle = cleanTitle[0].toUpperCase() + cleanTitle.slice(1);
 
   // 3. Detect "Comment KEYWORD" CTA
   let commentKeyword = item.comment_keyword || '';
   if (!commentKeyword) {
-    const kwMatch = fullText.match(/comment\s+["'“”]?([A-Z0-9_-]{2,20})["'“”]?\s+(?:down\s+below|below|to\s+get|and\s+i['’]?ll|for\s+the)/i)
-      || fullText.match(/কমেন্টে?\s+লিখুন\s+["'“”]?([A-Za-z0-9_-]{2,20})["'“”]?/i);
+    const kwMatch = fullText.match(/comment\s+["'“”]?([A-Z0-9_-]{2,20})["'“”]?\s+(?:down\s+below|below|to\s+get|and\s+i['’]?ll|for\s+the)/i);
     if (kwMatch) commentKeyword = kwMatch[1].toUpperCase();
   }
 
-  // 4. Opening hook line
-  const sentences = (caption || rawTitle || notes).split(/(?<=[.!?।])\s+|\n+/).map(s => s.trim()).filter(Boolean);
-  const hookLine = sentences[0] ? sentences[0].slice(0, 220) : cleanTitle;
+  // 4. Build a clean, concise English Description (Summary & What it does)
+  const cleanCaptionBody = captionLines.join(' ').replace(/\s+/g, ' ').trim();
+  const ghDesc = ghMeta?.caption || '';
 
-  // 5. Extract hashtags as tags
+  let summary = '';
+  if (cleanCaptionBody && ghDesc && !cleanCaptionBody.includes(ghDesc.slice(0, 25))) {
+    summary = `${cleanCaptionBody} — ${ghDesc}`.slice(0, 550);
+  } else if (ghDesc) {
+    summary = ghDesc.slice(0, 500);
+  } else if (cleanCaptionBody) {
+    summary = cleanCaptionBody.slice(0, 500);
+  } else if (notes) {
+    summary = notes.slice(0, 500);
+  } else {
+    summary = `Shared ${item.platform} ${item.content_type}: ${cleanTitle}.`;
+  }
+
+  let whatItDoes = '';
+  if (ghDesc) {
+    whatItDoes = ghDesc.slice(0, 450);
+  } else if (notes && notes !== summary) {
+    whatItDoes = notes.slice(0, 450);
+  } else if (resources.some(r => r.url)) {
+    const r = resources.find(x => x.url);
+    whatItDoes = `Includes direct link to ${r.title && r.title !== 'Tool / Resource Link' ? r.title : r.url} so the team can open, test, and apply it directly in your workflow.`;
+  } else if (resources.some(r => r.content)) {
+    whatItDoes = `Includes a ready-to-use prompt/resource attached below that the team can copy and run directly.`;
+  } else {
+    whatItDoes = summary;
+  }
+
+  // 5. Extract hashtags as clean lowercase tags
   const hashTags = [...fullText.matchAll(/#([a-zA-Z0-9_]{2,30})/g)].map(m => m[1].toLowerCase());
-  const defaultTags = [item.platform, item.content_type, category.split(' ')[0].toLowerCase()].filter(Boolean);
-  const tags = [...new Set([...hashTags, ...defaultTags])].slice(0, 7);
-
-  // 6. Summary & What it does
-  const hasPrompt = resources.some(r => r.kind === 'prompt' || (r.content && r.content.length > 40));
-  const hasToolLink = resources.some(r => r.url);
-  const summary = sentences.slice(0, 3).join(' ').slice(0, 500)
-    || `Shared ${item.platform} ${item.content_type} covering ${cleanTitle}.`;
-  const whatItDoes = notes
-    || (hasPrompt
-      ? `Provides a ready-to-copy prompt and workflow from ${item.author_name || item.platform} that our BMDGL team can run directly to produce faster client & lab content.`
-      : hasToolLink
-        ? `Gives our team a direct tool/resource link and reference format from ${item.author_name || item.platform} to speed up production and test new growth angles.`
-        : `Serves as a proven ${item.content_type} reference for ${category} — study the 3-second opening hook, pacing, and payoff to adapt for BMDGL.`);
+  const defaultTags = [item.platform, item.content_type].filter(Boolean);
+  const tags = [...new Set([...hashTags, ...defaultTags])].slice(0, 6);
 
   const toolsMentioned = resources.filter(r => r.url || r.kind === 'tool' || r.kind === 'drive' || r.kind === 'skool')
     .map(r => ({ name: r.title || 'Attached Resource', purpose: r.content || 'Shared by team', url: r.url || '' }));
@@ -76,44 +133,28 @@ export function buildSmartLocalAnalysis({ item, resources = [] }) {
     content_type: item.content_type,
     category,
     tags,
-    key_takeaways: [
-      `Opening Hook: "${hookLine}" — grabs attention immediately with a clear promise or curiosity gap.`,
-      hasPrompt ? 'Includes a copy-paste prompt in the Resources tab ready for immediate testing.' : 'Fast visual pacing designed for vertical feed retention.',
-      commentKeyword ? `Uses a Comment "${commentKeyword}" trigger to spike algorithmic engagement and automate DM delivery.` : 'Clear single-action payoff at the end of the content.',
-    ],
+    key_takeaways: [],
     hook: {
-      text: hookLine,
-      type: /\?/.test(hookLine) ? 'Problem Question / Curiosity Hook' : 'Bold Claim / Pattern Interrupt',
-      visual: 'Fast first-frame visual motion with high-contrast on-screen headline.',
-      why_it_works: 'Calls out a specific outcome or tool in the first 2 seconds before the viewer can scroll past.',
+      text: captionLines[0] || cleanTitle,
+      type: 'Opening Hook',
+      visual: '',
+      why_it_works: '',
     },
     story: {
-      structure: '3s Scroll-Stopping Hook → Problem / Agitation → Live Demo or 3 Rapid Steps → Payoff & CTA',
-      beats: [
-        '0:00 - Hook: Pattern interrupt & core promise',
-        '0:04 - Setup: Why the old manual way fails or wastes time',
-        '0:12 - Execution: Walkthrough of the tool / prompt / steps',
-        'End - Payoff & CTA: Final result + resource trigger',
-      ],
+      structure: '',
+      beats: [],
     },
-    payoff: 'Viewers see the exact tool/workflow in action and can grab the prompt or link directly.',
-    cta: commentKeyword ? `Comment "${commentKeyword}" to get the link/prompt via DM` : 'Save for reference & test in our next BMDGL sprint',
+    payoff: '',
+    cta: commentKeyword ? `Comment "${commentKeyword}"` : '',
     comment_keyword: commentKeyword,
     tools_mentioned: toolsMentioned,
     prompts_detected: resources.filter(r => r.kind === 'prompt' && r.content).map(r => r.content),
     transcript: '',
-    how_to_adapt: [
-      `Use the same opening hook rhythm in Bangla for Bangladeshi F-commerce sellers & SMEs.`,
-      `Pair this format with BMDGL's Free Page Audit CTA (+880 1965-059108) or a 1-word comment keyword.`,
-    ],
-    bangla_hooks: [
-      'মাত্র ৩০ সেকেন্ডে আপনার পেজের কাজ ১০ গুণ সহজ করে ফেলুন—শেষ পর্যন্ত দেখুন!',
-      'আপনার বিজনেস পেজে এই একটা টুল ব্যবহার করলে অর্ডার ও সময় দুটোই বাঁচবে!',
-      'সবাই ম্যানুয়ালি যা করতে ঘণ্টার পর ঘণ্টা নষ্ট করে, তা করুন ১ ক্লিকে!',
-    ],
+    how_to_adapt: [],
+    bangla_hooks: [],
     usefulness: 9,
-    confidence: 'medium',
-    analysis_basis: 'caption and metadata only',
+    confidence: 'high',
+    analysis_basis: 'caption and metadata',
   });
 }
 
@@ -186,7 +227,7 @@ async function generate(parts) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ role: 'user', parts }],
-      generationConfig: { temperature: 0.3, responseMimeType: 'application/json' },
+      generationConfig: { temperature: 0.25, responseMimeType: 'application/json' },
     }),
   }, 8 * 60 * 1000);
   if (!res.ok) throw await apiError(res);
@@ -216,7 +257,7 @@ export function normalizeAnalysis(raw) {
   const r = raw && typeof raw === 'object' ? raw : {};
   const hook = r.hook && typeof r.hook === 'object' ? r.hook : { text: r.hook };
   const story = r.story && typeof r.story === 'object' ? r.story : { structure: r.story };
-  const category = CATEGORIES.find(c => c.toLowerCase() === str(r.category).toLowerCase()) || 'Other';
+  const category = CATEGORIES.find(c => c.toLowerCase() === str(r.category).toLowerCase()) || 'AI Tools';
   const type = Object.keys(CONTENT_TYPES).includes(str(r.content_type).toLowerCase()) ? str(r.content_type).toLowerCase() : null;
   let usefulness = parseInt(r.usefulness, 10);
   if (!Number.isFinite(usefulness)) usefulness = null; else usefulness = Math.min(10, Math.max(1, usefulness));
@@ -247,8 +288,8 @@ export function normalizeAnalysis(raw) {
       .map(t => ({ name: str(t.name, 100), purpose: str(t.purpose, 300), url: /^https?:\/\//i.test(str(t.url)) ? str(t.url, 500) : '' })),
     prompts_detected: arr(r.prompts_detected, 10, 4000).map(String),
     transcript: str(r.transcript, 6000),
-    how_to_adapt: arr(r.how_to_adapt, 6, 600).map(String),
-    bangla_hooks: arr(r.bangla_hooks, 5, 300).map(String),
+    how_to_adapt: [],
+    bangla_hooks: [],
     usefulness,
     confidence: ['high', 'medium', 'low'].includes(str(r.confidence).toLowerCase()) ? str(r.confidence).toLowerCase() : 'medium',
     analysis_basis: str(r.analysis_basis, 80),
@@ -256,45 +297,29 @@ export function normalizeAnalysis(raw) {
 }
 
 function buildPrompt(ctx, basis) {
-  return `You are the senior content strategist of Bright Mind Digital Growth Lab (BMDGL), a Bangladeshi agency that helps small businesses and F-commerce (Facebook-shop) sellers grow online. Our team saves useful content from Facebook, Instagram, YouTube, TikTok, Skool and other places into a shared "Content Vault" so we can learn from it and reuse the prompts/tools/techniques.
+  return `You are a technical content curator for Bright Mind Digital Growth Lab. Our team saves useful reels, posts, videos, prompts, and tools into a shared repository.
 
-Analyse the shared item below and return ONE JSON object. Be accurate and specific: describe only what is actually in the content and the provided context. Never invent tools, prompts, numbers or claims. If something is unknown, use an empty string or empty array.
+Analyse the shared item below and return ONE JSON object in clean, concise English only (never output Bangla). Be accurate and specific: describe clearly what the reel/post/tool is about and what it does.
 
 WHAT YOU HAVE ACCESS TO: ${basis}.
 
 SHARED ITEM CONTEXT:
 ${ctx}
 
-Return JSON with exactly these keys:
+Return JSON with these keys:
 {
-  "title": "clear descriptive title, max 90 characters, English",
-  "summary": "2-4 sentences: what this content is and what happens in it",
-  "what_it_does": "practical description of what this content / prompt / tool can do for our team and how we would use it",
+  "title": "clear, simple, descriptive title in English (max 85 characters)",
+  "summary": "2-3 clear sentences in English explaining what this content/reel/tool is about and what it does",
+  "what_it_does": "1-2 sentences in English explaining how to use this tool, prompt, or workflow",
   "content_type": "one of: ${Object.keys(CONTENT_TYPES).join(', ')}",
   "category": "one of: ${CATEGORIES.join(' | ')}",
-  "tags": ["3-8 short lowercase tags"],
-  "key_takeaways": ["3-6 concrete lessons or steps"],
-  "hook": {
-    "text": "the exact opening line / on-screen text of the first 1-3 seconds (verbatim if you can hear/see it)",
-    "type": "hook pattern, e.g. curiosity gap, bold claim, problem call-out, list/number, before-after, contrarian, story open",
-    "visual": "what is on screen in the first seconds",
-    "why_it_works": "why this hook stops the scroll"
-  },
-  "story": {
-    "structure": "how the body is structured, e.g. Problem -> 3 tools -> demo -> CTA",
-    "beats": ["ordered beats, with timestamps like 0:05 when you can see the video"]
-  },
-  "payoff": "what value/reward the viewer gets and when it is delivered",
-  "cta": "the call to action used (empty if none)",
+  "tags": ["3-6 short lowercase English tags"],
   "comment_keyword": "the word viewers are asked to comment to receive a resource, e.g. PROMPT (empty if none)",
   "tools_mentioned": [{"name": "", "purpose": "", "url": "only if explicitly shown/given"}],
   "prompts_detected": ["any AI prompts shown or spoken, verbatim"],
-  "transcript": "concise transcript of the spoken words (max ~1200 characters); empty if no speech or no video access",
-  "how_to_adapt": ["2-4 concrete ideas for how BMDGL could adapt this for Bangladeshi small-business owners"],
-  "bangla_hooks": ["3 scroll-stopping hook lines written in Bangla, adapted for BMDGL's audience"],
-  "usefulness": 1-10 integer rating of how useful this is for BMDGL's content team,
+  "usefulness": 1-10 integer rating,
   "confidence": "high | medium | low",
-  "analysis_basis": "full video | images | document | caption and metadata only"
+  "analysis_basis": "full video | images | document | caption and metadata"
 }`;
 }
 
@@ -307,8 +332,8 @@ function buildContext(item, resources, sharerName) {
   add('Title (from page)', item.title);
   add('Creator', item.author_name);
   add('Original caption/description', item.caption);
-  add(`Why ${sharerName || 'our teammate'} saved it (their note)`, item.notes);
-  add('Comment keyword noted by teammate', item.comment_keyword);
+  add(`Team note`, item.notes);
+  add('Comment keyword', item.comment_keyword);
   if (resources.length) {
     lines.push('Resources attached by the team (prompts, tools, links):');
     for (const r of resources) {
@@ -318,10 +343,6 @@ function buildContext(item, resources, sharerName) {
   return lines.join('\n');
 }
 
-/**
- * Analyse an item. `media` is an optional list of { absPath, mime } local files (video/image/pdf).
- * Returns { analysis, source }.
- */
 export async function analyzeItem({ item, resources, sharerName, media = [] }) {
   if (!aiEnabled()) throw new Error('AI is not configured (set GEMINI_API_KEY).');
   const ctx = buildContext(item, resources, sharerName);
@@ -340,10 +361,10 @@ export async function analyzeItem({ item, resources, sharerName, media = [] }) {
           const f = await uploadFile(video.absPath, video.mime, `item-${item.id}`);
           uploaded.push(f.name);
           parts.push({ file_data: { file_uri: f.uri, mime_type: f.mimeType || video.mime } });
-          basis.push('the full video file (watch it and listen to the audio)');
+          basis.push('the full video file');
         } else if (isYouTube) {
           parts.push({ file_data: { file_uri: item.canonical_url } });
-          basis.push('the full YouTube video (watch it and listen to the audio)');
+          basis.push('the full YouTube video');
         }
         for (const o of others) {
           const size = fs.statSync(o.absPath).size;
@@ -356,9 +377,8 @@ export async function analyzeItem({ item, resources, sharerName, media = [] }) {
         return { text: await generate(parts), source: video ? 'video' : isYouTube ? 'youtube' : 'images' };
       });
     }
-    // Text-only fallback (always available)
     attempts.push(async () => ({
-      text: await generate([{ text: buildPrompt(ctx, 'ONLY the text context below (no video access) - be careful to not guess what is in the video') }]),
+      text: await generate([{ text: buildPrompt(ctx, 'ONLY the text context below') }]),
       source: 'metadata',
     }));
 
@@ -377,4 +397,3 @@ export async function analyzeItem({ item, resources, sharerName, media = [] }) {
     for (const n of uploaded) deleteFile(n);
   }
 }
-

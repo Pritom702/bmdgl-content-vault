@@ -4,22 +4,21 @@ import {
 } from './platforms.js';
 
 const TEAM_DEMO_USERS = [
-  { name: 'Pritom',   email: 'pritom@brightmind.com',   password: 'password123', role: 'Admin',  color: '#2563EB' },
-  { name: 'Sharafat', email: 'sharafat@brightmind.com', password: 'password123', role: 'Admin',  color: '#7C3AED' },
-  { name: 'Minhaj',   email: 'minhaj@brightmind.com',   password: 'password123', role: 'Member', color: '#DB2777' },
-  { name: 'Saiful',   email: 'saiful@brightmind.com',   password: 'password123', role: 'Member', color: '#EA580C' },
-  { name: 'Rafi',     email: 'rafi@brightmind.com',     password: 'password123', role: 'Member', color: '#16A34A' },
-  { name: 'Tanvir',   email: 'tanvir@brightmind.com',   password: 'password123', role: 'Member', color: '#0891B2' },
-  { name: 'Akib',     email: 'akib@brightmind.com',     password: 'password123', role: 'Member', color: '#CA8A04' },
+  { name: 'Pritom',   email: 'pritom@brightmind.com',   password: 'password123', role: 'Admin',  color: '#10B981' },
+  { name: 'Sharafat', email: 'sharafat@brightmind.com', password: 'password123', role: 'Admin',  color: '#F59E0B' },
+  { name: 'Minhaj',   email: 'minhaj@brightmind.com',   password: 'password123', role: 'Member', color: '#EA580C' },
+  { name: 'Saiful',   email: 'saiful@brightmind.com',   password: 'password123', role: 'Member', color: '#0D9488' },
+  { name: 'Rafi',     email: 'rafi@brightmind.com',     password: 'password123', role: 'Member', color: '#65A30D' },
+  { name: 'Tanvir',   email: 'tanvir@brightmind.com',   password: 'password123', role: 'Member', color: '#D97706' },
+  { name: 'Akib',     email: 'akib@brightmind.com',     password: 'password123', role: 'Member', color: '#E11D48' },
 ];
 
 const state = {
   boot: null,
   user: null,
-  view: 'vault', // 'vault' | 'prompts' | 'hooks' | 'tools' | 'team'
+  view: 'vault', // 'vault' | 'prompts' | 'tools' | 'team'
   layout: localStorage.getItem('vault_layout') || 'grid',
   theme: localStorage.getItem('vault_theme') || 'dark',
-  sidebarOpen: false,
   filters: {
     q: '',
     platform: '',
@@ -41,10 +40,10 @@ const state = {
   total: 0,
   loading: false,
   activeItem: null,
-  activeTab: 'breakdown', // 'breakdown' | 'resources' | 'adapt' | 'discussion' | 'edit'
+  activeTab: 'overview', // 'overview' | 'edit'
+  showAddResource: false,
   stageMode: 'auto', // 'auto' | 'offline' | 'embed'
   prompts: [],
-  hooks: [],
   tools: [],
   team: { members: [], inviteCode: null },
   pollTimer: null,
@@ -77,13 +76,6 @@ function relTime(iso) {
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   if (diff < 86400 * 30) return `${Math.floor(diff / 86400)}d ago`;
   return d.toLocaleDateString();
-}
-
-function formatBytes(n) {
-  if (!n) return '';
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function toast(msg, isErr = false) {
@@ -137,7 +129,6 @@ function parseSmartResourceInput(raw) {
   const url = extractUrl(txt);
   const rest = url ? txt.replace(url, '').trim() : txt;
 
-  // Check if they just typed a single keyword like "PROMPT" or "comment SOUND"
   const kwOnly = txt.match(/^(?:comment\s+)?["']?([A-Za-z0-9_-]{2,18})["']?$/i);
   if (kwOnly && !url) {
     return { resources: [], comment_keyword: kwOnly[1].toUpperCase(), notes: '' };
@@ -148,7 +139,19 @@ function parseSmartResourceInput(raw) {
   if (url) {
     if (/drive\.google\.com|docs\.google\.com/i.test(url)) { kind = 'drive'; title = rest || 'Google Drive Folder / Doc'; }
     else if (/skool\.com/i.test(url)) { kind = 'skool'; title = rest || 'Skool Community Resource'; }
-    else { kind = 'tool'; title = rest.slice(0, 80) || 'Tool / Resource Link'; }
+    else if (/github\.com/i.test(url)) {
+      kind = 'tool';
+      try {
+        const u = new URL(url);
+        const parts = u.pathname.split('/').filter(Boolean);
+        title = rest.slice(0, 80) || (parts.length >= 2 ? `${parts[1]} (GitHub)` : 'GitHub Repository');
+      } catch {
+        title = rest.slice(0, 80) || 'GitHub Repository';
+      }
+    } else {
+      kind = 'tool';
+      title = rest.slice(0, 80) || 'Tool / Resource Link';
+    }
   }
   return {
     resources: [{ kind, title, content: rest, url: url || '' }],
@@ -235,15 +238,15 @@ function renderAuth() {
           <img src="/logo.png" alt="Bright Mind">
           <div>
             <h2>BMDGL Content Vault</h2>
-            <div class="sub">Internal Team Portal · Persistent Login Enabled</div>
+            <div class="sub">Internal Team Repository · Persistent Session</div>
           </div>
         </div>
 
         ${authMode === 'login' ? `
           <div class="team-quick-box">
             <div class="team-quick-title">
-              <span>⚡ 1-Click Team Access (Tap your name)</span>
-              <span style="font-family:var(--font-mono);font-size:10.5px">pw: password123</span>
+              <span>1-Click Team Access</span>
+              <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--mute)">pw: password123</span>
             </div>
             <div class="team-chips">
               ${TEAM_DEMO_USERS.map(u => `
@@ -251,7 +254,7 @@ function renderAuth() {
                   <span class="team-chip-dot" style="background:${u.color}">${esc(u.name[0])}</span>
                   <div style="min-width:0">
                     <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(u.name)}</div>
-                    <div style="font-size:10px;color:var(--mute);font-weight:600">${esc(u.role)}</div>
+                    <div style="font-size:10px;color:var(--mute);font-weight:500">${esc(u.role)}</div>
                   </div>
                 </button>
               `).join('')}
@@ -266,12 +269,12 @@ function renderAuth() {
             <div class="field">
               <div style="display:flex;justify-content:space-between;align-items:center">
                 <label>Password</label>
-                <a href="#" id="link-forgot-pw" style="font-size:12px;font-weight:700">Forgot password?</a>
+                <a href="#" id="link-forgot-pw" style="font-size:12px;font-weight:600">Forgot password?</a>
               </div>
               <input name="password" id="auth-pass" type="password" required placeholder="••••••••">
             </div>
             <button type="submit" class="btn btn-primary" style="width:100%;padding:11px;margin-top:4px">
-              Sign In (Keep Me Logged In) →
+              Sign In →
             </button>
           </form>
         ` : authMode === 'forgot' ? `
@@ -323,7 +326,6 @@ function renderAuth() {
     </div>
   `;
 
-  // 1-Click Team Login buttons
   app.querySelectorAll('[data-quick-login]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const email = btn.dataset.quickLogin;
@@ -334,7 +336,6 @@ function renderAuth() {
         await loadAllData();
         handleHashRoute();
       } catch {
-        // If user changed their password previously, prefill email and focus password
         const em = document.getElementById('auth-email');
         if (em) em.value = email;
         document.getElementById('auth-pass')?.focus();
@@ -386,7 +387,7 @@ function renderAuth() {
   });
 }
 
-// ---------- Main Application Render (Full-Width Top Navbar Layout) ----------
+// ---------- Main Application Render ----------
 function renderApp() {
   if (!state.user) return renderAuth();
   const app = document.getElementById('app');
@@ -407,36 +408,33 @@ function renderApp() {
 
           <nav class="top-nav-tabs">
             <button type="button" class="top-nav-btn ${state.view === 'vault' ? 'active' : ''}" data-nav="all">
-              🎬 Feed <span class="pill-count">${s.total}</span>
+              Feed <span class="pill-count">${s.total}</span>
             </button>
             <button type="button" class="top-nav-btn ${state.view === 'prompts' ? 'active' : ''}" data-view="prompts">
-              ✨ Prompts <span class="pill-count">${s.prompts}</span>
-            </button>
-            <button type="button" class="top-nav-btn ${state.view === 'hooks' ? 'active' : ''}" data-view="hooks">
-              🎯 Hooks &amp; Payoffs
+              Prompts <span class="pill-count">${s.prompts}</span>
             </button>
             <button type="button" class="top-nav-btn ${state.view === 'tools' ? 'active' : ''}" data-view="tools">
-              🧰 Tools &amp; Links
+              Tools &amp; Links
             </button>
             <button type="button" class="top-nav-btn ${state.view === 'team' ? 'active' : ''}" data-view="team">
-              👥 Team (${TEAM_DEMO_USERS.length})
+              Team (${TEAM_DEMO_USERS.length})
             </button>
           </nav>
 
           <div class="search-box">
-            <span class="s-icon">🔍</span>
-            <input id="global-search" type="search" value="${esc(f.q)}" placeholder="Search reels, prompts, tools, hooks…">
+            <span class="s-icon">⌕</span>
+            <input id="global-search" type="search" value="${esc(f.q)}" placeholder="Search reels, prompts, tools…">
             <kbd>/</kbd>
           </div>
 
           <div class="header-right">
             <button class="icon-btn ${state.layout === 'grid' ? 'active' : ''}" data-layout="grid" title="Grid view">⊞</button>
             <button class="icon-btn ${state.layout === 'list' ? 'active' : ''}" data-layout="list" title="Compact list">☰</button>
-            <button class="icon-btn" id="btn-theme" title="Toggle Dark / Light mode">${state.theme === 'dark' ? '☀️' : '🌙'}</button>
+            <button class="icon-btn" id="btn-theme" title="Toggle Dark / Light mode">${state.theme === 'dark' ? '☀' : '☾'}</button>
             <div class="user-pill">
-              <span class="avatar" style="background:${esc(state.user.color || '#2563EB')}">${esc(initials(state.user.name))}</span>
+              <span class="avatar" style="background:#10B981">${esc(initials(state.user.name))}</span>
               <span>${esc(state.user.name.replace(/\s*\(Admin\)/i, ''))}</span>
-              <button class="icon-btn" id="btn-logout" title="Switch account / Sign out" style="padding:3px 7px;border:none">↪</button>
+              <button class="icon-btn" id="btn-logout" title="Switch account / Sign out" style="padding:2px 6px;border:none;background:transparent">↪</button>
             </div>
           </div>
         </div>
@@ -453,7 +451,6 @@ function renderApp() {
 
 function renderMainView() {
   if (state.view === 'prompts') return renderPromptsView();
-  if (state.view === 'hooks') return renderHooksView();
   if (state.view === 'tools') return renderToolsView();
   if (state.view === 'team') return renderTeamView();
   return renderVaultView();
@@ -466,42 +463,35 @@ function renderVaultView() {
     .filter(k => f[k]).length;
 
   return `
-    <!-- 2-Second Share Bar: Just Paste Reel Link + Paste Prompt/Tool -->
     <form class="quick-composer" id="instant-drop-form">
       <div class="qc-top">
         <div class="qc-title">
-          <span>⚡ Quick Drop to Vault</span>
-          <span class="qc-badge">Auto-Detects Video, Summary, Hook &amp; How to Use It</span>
+          <span>Quick Drop to Vault</span>
+          <span class="qc-badge">Auto-Fetches Video, Title &amp; Description</span>
         </div>
-        <button type="button" class="btn btn-sm" id="btn-open-upload">📎 Or Upload Video / File</button>
+        <button type="button" class="btn btn-sm" id="btn-open-upload">📎 Upload File</button>
       </div>
       <div class="qc-grid">
         <input class="qc-input" id="qc-url" placeholder="1. Paste Reel / Post / YouTube / TikTok / Skool link…" autocomplete="off">
-        <input class="qc-input" id="qc-prompt" placeholder="2. Paste Prompt, Drive/Tool link, or 'Comment KEYWORD' (optional)…" autocomplete="off">
+        <input class="qc-input" id="qc-prompt" placeholder="2. Paste Prompt, GitHub / Drive / Tool link, or Comment Keyword…" autocomplete="off">
         <button type="submit" class="qc-submit" id="qc-submit-btn">Save to Vault →</button>
       </div>
       <div class="qc-foot">
-        <span id="qc-live-hint">Just paste &amp; hit Enter — the Vault fetches the video for inline playback and writes the full breakdown automatically.</span>
+        <span id="qc-live-hint">Paste the content link and the prompt/tool link — the Vault downloads the HD video for inline playback and writes a clean English title &amp; description automatically.</span>
       </div>
     </form>
 
     <div class="filter-bar">
       <div class="filter-chips">
         <button class="chip ${!f.platform && !f.fav && !f.pending ? 'active' : ''}" data-plat="">All (${state.stats?.total || 0})</button>
-        <button class="chip ${f.fav === '1' ? 'active' : ''}" data-nav="fav">⭐ Starred</button>
-        <button class="chip ${f.pending === '1' ? 'active' : ''}" data-nav="pending">💬 Need Comment / DM</button>
-        ${['instagram', 'facebook', 'youtube', 'tiktok', 'skool', 'drive'].map(p => {
+        <button class="chip ${f.fav === '1' ? 'active' : ''}" data-nav="fav">★ Starred</button>
+        ${['facebook', 'instagram', 'youtube', 'tiktok', 'skool', 'drive'].map(p => {
           const info = PLATFORMS[p];
           return `<button class="chip ${f.platform === p ? 'active' : ''}" data-plat="${p}">${esc(info.label)}</button>`;
         }).join('')}
       </div>
 
       <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-        <select class="filter-select" id="flt-collection">
-          <option value="">All Collections</option>
-          ${state.collections.map(c => `<option value="${c.id}" ${String(f.collection) === String(c.id) ? 'selected' : ''}>${esc(c.emoji || '📁')} ${esc(c.name)} (${c.n || 0})</option>`).join('')}
-        </select>
-
         <select class="filter-select" id="flt-category">
           <option value="">All Categories</option>
           ${CATEGORIES.map(c => `<option value="${esc(c)}" ${f.category === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
@@ -510,7 +500,6 @@ function renderVaultView() {
         <select class="filter-select" id="flt-sort">
           <option value="newest" ${f.sort === 'newest' ? 'selected' : ''}>Newest First</option>
           <option value="top" ${f.sort === 'top' ? 'selected' : ''}>Most Upvoted</option>
-          <option value="useful" ${f.sort === 'useful' ? 'selected' : ''}>Top Rated</option>
         </select>
 
         ${activeFiltersCount ? `<button class="btn btn-sm" id="btn-clear-filters">✕ Reset (${activeFiltersCount})</button>` : ''}
@@ -519,9 +508,8 @@ function renderVaultView() {
 
     ${state.items.length === 0 ? `
       <div class="empty-state">
-        <div style="font-size:38px">🎬</div>
-        <h3>Nothing here yet</h3>
-        <p>Paste any Facebook/Instagram Reel, YouTube Short, or prompt in the Quick Drop bar above.</p>
+        <h3>No content saved yet</h3>
+        <p style="color:var(--mute)">Paste any Reel, video, post, or tool link in the Quick Drop bar above.</p>
         ${activeFiltersCount ? `<button class="btn" id="btn-empty-reset">Clear Filters</button>` : ''}
       </div>
     ` : state.layout === 'list' ? `
@@ -540,6 +528,8 @@ function renderItemCard(item) {
   const plat = PLATFORMS[item.platform] || PLATFORMS.web;
   const ctype = CONTENT_TYPES[item.content_type] || 'Post';
   const hasPlayableVideo = Boolean(item.media_url && (item.media_mime || '').startsWith('video/'));
+  const desc = item.summary || item.what_it_does || 'Fetching description…';
+  const res = item.primary_resource;
 
   return `
     <article class="vcard" data-open-item="${item.id}">
@@ -550,17 +540,16 @@ function renderItemCard(item) {
           <img src="${esc(item.thumb)}" alt="${esc(item.title)}" loading="lazy">
         ` : `
           <div class="vcard-fallback">
-            <div class="vf-hook bn">${esc(item.hook_text || item.title)}</div>
+            <div class="vf-hook">${esc(item.title)}</div>
           </div>
         `}
         <div class="vcard-badges-top">
-          <span class="platform-pill" style="background:${plat.color}">${esc(plat.label)}</span>
+          <span class="platform-pill">${esc(plat.label)}</span>
           <span class="type-pill">${esc(ctype)}</span>
         </div>
-        <div class="play-overlay" title="Click to watch & view breakdown">▶</div>
+        <div class="play-overlay" title="Click to watch video & view details">▶</div>
         <div class="vcard-badges-bottom">
-          ${hasPlayableVideo ? `<span class="offline-badge">▶ Instant HD Player</span>` : (item.archive_status === 'processing' ? `<span class="score-badge">⏳ Fetching Video…</span>` : `<span></span>`)}
-          ${item.usefulness ? `<span class="score-badge">★ ${item.usefulness}/10</span>` : ''}
+          ${hasPlayableVideo ? `<span class="offline-badge">● HD Video Ready</span>` : (item.archive_status === 'processing' ? `<span class="type-pill">Downloading video…</span>` : `<span></span>`)}
         </div>
       </div>
 
@@ -570,16 +559,28 @@ function renderItemCard(item) {
           <span class="status-dot status-${esc(item.status)}">${esc(STATUSES[item.status] || item.status)}</span>
         </div>
 
-        <h3 class="vcard-title bn">${esc(item.title || 'Shared Content')}</h3>
+        <h3 class="vcard-title">${esc(item.title || 'Shared Content')}</h3>
 
-        <div class="vcard-what">
-          <div class="vcard-what-text"><strong>What it does:</strong> ${esc(item.what_it_does || item.summary || item.hook_text || 'Auto-analyzing content…')}</div>
-        </div>
+        <p class="vcard-desc">${esc(desc)}</p>
+
+        ${res ? `
+          <div class="vcard-resource-bar">
+            <div class="vcard-resource-info">
+              <span class="vcard-resource-label">${esc(RESOURCE_KINDS[res.kind] || 'Attached Tool / Prompt')}</span>
+              <span class="vcard-resource-title">${esc(res.title || res.url || res.content)}</span>
+            </div>
+            ${res.url ? `
+              <a href="${esc(res.url)}" target="_blank" rel="noopener" class="btn btn-sm btn-primary" title="Open attached tool/link">↗ Open</a>
+            ` : res.content ? `
+              <button type="button" class="btn btn-sm" data-copy-text="${esc(res.content)}">Copy</button>
+            ` : ''}
+          </div>
+        ` : ''}
 
         ${item.comment_keyword ? `
           <div class="kw-banner ${item.resource_status === 'received' ? 'done' : ''}">
-            <span>💬 Comment "${esc(item.comment_keyword)}"</span>
-            <span style="margin-left:auto">${item.resource_status === 'received' ? '✓ Saved' : '⏳ Need DM'}</span>
+            <span>Comment "${esc(item.comment_keyword)}"</span>
+            <span style="margin-left:auto">${item.resource_status === 'received' ? '✓ Resource Linked' : 'Keyword Trigger'}</span>
           </div>
         ` : ''}
 
@@ -588,7 +589,6 @@ function renderItemCard(item) {
             ${item.shared_by ? esc(item.shared_by.name) : 'Team'} · ${relTime(item.created_at)}
           </span>
           <div class="vcard-actions">
-            ${item.resources ? `<span class="act-btn" title="Attached prompts/tools">🧰 ${item.resources}</span>` : ''}
             <button type="button" class="act-btn ${item.upvoted ? 'active-up' : ''}" data-upvote="${item.id}">
               ▲ ${item.upvotes || 0}
             </button>
@@ -604,16 +604,17 @@ function renderItemCard(item) {
 
 function renderItemRow(item) {
   const plat = PLATFORMS[item.platform] || PLATFORMS.web;
+  const desc = item.summary || item.what_it_does || '';
   return `
     <div class="vrow" data-open-item="${item.id}">
-      ${item.thumb ? `<img class="vrow-thumb" src="${esc(item.thumb)}" alt="">` : `<div class="vrow-thumb" style="display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800">▶</div>`}
+      ${item.thumb ? `<img class="vrow-thumb" src="${esc(item.thumb)}" alt="">` : `<div class="vrow-thumb" style="display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700">▶</div>`}
       <div style="flex:1;min-width:0">
         <div style="display:flex;gap:6px;align-items:center;margin-bottom:3px">
-          <span class="platform-pill" style="background:${plat.color};font-size:10px;padding:2px 8px">${esc(plat.label)}</span>
+          <span class="cat-badge">${esc(plat.label)}</span>
           <span class="cat-badge">${esc(item.category)}</span>
         </div>
-        <div style="font-weight:800;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" class="bn">${esc(item.title)}</div>
-        <div style="font-size:12px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(item.what_it_does || item.summary || '')}</div>
+        <div style="font-weight:700;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(item.title)}</div>
+        <div style="font-size:12.5px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(desc)}</div>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <button type="button" class="act-btn ${item.upvoted ? 'active-up' : ''}" data-upvote="${item.id}">▲ ${item.upvotes || 0}</button>
@@ -627,10 +628,10 @@ function renderItemRow(item) {
 function renderPromptsView() {
   return `
     <div style="margin-bottom:18px">
-      <h2 style="margin:0;font-size:21px;font-weight:800">✨ Team Prompt Library</h2>
-      <p style="margin:3px 0 0;color:var(--mute)">All AI prompts shared by the team—1-click copy.</p>
+      <h2 style="margin:0;font-size:20px;font-weight:700">Prompts Library</h2>
+      <p style="margin:4px 0 0;color:var(--mute)">All AI prompts shared by the team—ready to copy in one click.</p>
     </div>
-    ${state.prompts.length === 0 ? `<div class="empty-state"><h3>No prompts yet</h3></div>` : `
+    ${state.prompts.length === 0 ? `<div class="empty-state"><h3>No prompts saved yet</h3><p style="color:var(--mute)">Paste a prompt in the Quick Drop bar on the Feed to add one.</p></div>` : `
       <div class="vault-grid">
         ${state.prompts.map((p, idx) => `
           <div class="lib-card">
@@ -638,47 +639,11 @@ function renderPromptsView() {
               <span class="cat-badge">${esc(p.category || 'Prompt')}</span>
               <span style="font-size:11.5px;color:var(--mute)">Shared by ${esc(p.author || 'Team')}</span>
             </div>
-            <h3 style="margin:0;font-size:15px;font-weight:800">${esc(p.title || p.item_title)}</h3>
+            <h3 style="margin:0;font-size:15.5px;font-weight:700">${esc(p.title || p.item_title)}</h3>
             <div class="prompt-block">${esc(p.content)}</div>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:auto;padding-top:8px">
-              <button class="btn btn-sm" data-open-item="${p.item_id}">▶ Watch Source Video</button>
-              <button class="btn btn-sm btn-primary" data-copy-prompt="${idx}">📋 Copy Prompt</button>
-            </div>
-          </div>
-        `).join('')}
-      </div>
-    `}
-  `;
-}
-
-function renderHooksView() {
-  return `
-    <div style="margin-bottom:18px">
-      <h2 style="margin:0;font-size:21px;font-weight:800">🎯 Scroll-Stopping Hooks &amp; Payoffs</h2>
-      <p style="margin:3px 0 0;color:var(--mute)">Extracted opening hooks, why they work, and Bangla adaptations.</p>
-    </div>
-    ${state.hooks.length === 0 ? `<div class="empty-state"><h3>No analyzed hooks yet</h3></div>` : `
-      <div class="vault-grid">
-        ${state.hooks.map(h => `
-          <div class="lib-card">
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <span class="cat-badge">${esc(h.hook.type || 'Hook')}</span>
-              ${h.usefulness ? `<span class="score-badge">★ ${h.usefulness}/10</span>` : ''}
-            </div>
-            <div class="vcard-what bn" style="font-size:14px;font-weight:700">"${esc(h.hook.text)}"</div>
-            ${h.hook.why_it_works ? `<div style="font-size:12.5px;color:var(--ink-2)"><strong>Why it works:</strong> ${esc(h.hook.why_it_works)}</div>` : ''}
-            ${h.payoff ? `<div style="font-size:12.5px;color:var(--green)"><strong>Payoff:</strong> ${esc(h.payoff)}</div>` : ''}
-            ${(h.bangla_hooks || []).length ? `
-              <div style="background:var(--surface-2);padding:10px 12px;border-radius:10px;border:1px solid var(--border)">
-                <div style="font-size:11px;font-weight:800;color:var(--primary);text-transform:uppercase;margin-bottom:4px">🇧🇩 Bangla Hook Ideas</div>
-                <ul style="margin:0;padding-left:16px;font-size:12.5px" class="bn">
-                  ${h.bangla_hooks.map(bh => `<li>${esc(bh)}</li>`).join('')}
-                </ul>
-              </div>
-            ` : ''}
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:auto;padding-top:8px">
-              <button class="btn btn-sm" data-open-item="${h.item_id}">▶ Open Video</button>
-              <button class="btn btn-sm" data-copy-text="${esc(h.hook.text)}">📋 Copy Hook</button>
+              <button class="btn btn-sm" data-open-item="${p.item_id}">▶ Watch Video</button>
+              <button class="btn btn-sm btn-primary" data-copy-prompt="${idx}">Copy Prompt</button>
             </div>
           </div>
         `).join('')}
@@ -690,8 +655,8 @@ function renderHooksView() {
 function renderToolsView() {
   return `
     <div style="margin-bottom:18px">
-      <h2 style="margin:0;font-size:21px;font-weight:800">🧰 Tools, Drive Folders &amp; Links</h2>
-      <p style="margin:3px 0 0;color:var(--mute)">Every tool, Drive link, and Skool resource shared by the team.</p>
+      <h2 style="margin:0;font-size:20px;font-weight:700">Tools, GitHub Repos &amp; Resource Links</h2>
+      <p style="margin:4px 0 0;color:var(--mute)">Every tool, GitHub repository, Drive folder, and Skool resource shared by the team.</p>
     </div>
     ${state.tools.length === 0 ? `<div class="empty-state"><h3>No tools saved yet</h3></div>` : `
       <div class="vault-grid">
@@ -699,12 +664,13 @@ function renderToolsView() {
           <div class="lib-card">
             <div style="display:flex;justify-content:space-between;align-items:center">
               <span class="cat-badge">${esc(RESOURCE_KINDS[t.kind] || t.kind || 'Tool')}</span>
-              <span style="font-size:11.5px;color:var(--mute)">${esc(t.item_title)}</span>
+              <span style="font-size:11.5px;color:var(--mute)">${esc(t.author || 'Team')}</span>
             </div>
-            <h3 style="margin:0;font-size:15.5px;font-weight:800">${esc(t.title || 'Resource')}</h3>
-            ${t.content ? `<p style="margin:0;font-size:13px;color:var(--ink-2);white-space:pre-wrap">${esc(t.content)}</p>` : ''}
-            <div style="display:flex;gap:8px;margin-top:auto;padding-top:8px">
-              <button class="btn btn-sm" data-open-item="${t.item_id}">▶ Open Video</button>
+            <h3 style="margin:0;font-size:16px;font-weight:700">${esc(t.title || 'Resource')}</h3>
+            ${t.content ? `<p style="margin:0;font-size:13px;color:var(--ink-2);line-height:1.5">${esc(t.content)}</p>` : ''}
+            ${t.url ? `<div style="font-family:var(--font-mono);font-size:11.5px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(t.url)}</div>` : ''}
+            <div style="display:flex;gap:8px;margin-top:auto;padding-top:10px">
+              <button class="btn btn-sm" data-open-item="${t.item_id}">▶ Watch Video</button>
               ${t.url ? `<a href="${esc(t.url)}" target="_blank" rel="noopener" class="btn btn-sm btn-primary">↗ Open Link</a>` : ''}
             </div>
           </div>
@@ -719,22 +685,22 @@ function renderTeamView() {
   return `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:18px">
       <div class="lib-card">
-        <h3 style="margin:0;font-size:17px;font-weight:800">👥 BMDGL Team Members (${members.length})</h3>
+        <h3 style="margin:0;font-size:17px;font-weight:700">BMDGL Team Members (${members.length})</h3>
         ${inviteCode ? `
           <div class="info-box" style="display:flex;align-items:center;justify-content:space-between;gap:10px">
             <div>
-              <div style="font-size:11px;font-weight:800;color:var(--mute);text-transform:uppercase">Team Invite Code</div>
-              <div style="font-family:var(--font-mono);font-size:16px;font-weight:800;color:var(--primary)">${esc(inviteCode)}</div>
+              <div style="font-size:11px;font-weight:700;color:var(--mute);text-transform:uppercase">Team Invite Code</div>
+              <div style="font-family:var(--font-mono);font-size:15px;font-weight:700;color:var(--accent)">${esc(inviteCode)}</div>
             </div>
             <button class="btn btn-sm btn-primary" data-copy-text="${esc(inviteCode)}">Copy</button>
           </div>
         ` : ''}
         <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
           ${members.map(m => `
-            <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)">
-              <span class="avatar" style="background:${esc(m.color)}">${esc(initials(m.name))}</span>
+            <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2)">
+              <span class="avatar" style="background:#10B981">${esc(initials(m.name))}</span>
               <div style="flex:1">
-                <div style="font-weight:700">${esc(m.name)} <span style="font-size:11px;color:var(--mute)">(${esc(m.role)})</span></div>
+                <div style="font-weight:600">${esc(m.name)} <span style="font-size:11px;color:var(--mute)">(${esc(m.role)})</span></div>
                 <div style="font-size:11.5px;color:var(--mute)">${esc(m.email)} · ${m.shared || 0} shared</div>
               </div>
             </div>
@@ -743,15 +709,15 @@ function renderTeamView() {
       </div>
 
       <div class="lib-card">
-        <h3 style="margin:0;font-size:17px;font-weight:800">📦 Export &amp; Backups</h3>
-        <p style="margin:0;color:var(--mute);font-size:12.5px">Export the team's swipe file to Excel / Google Sheets or JSON.</p>
+        <h3 style="margin:0;font-size:17px;font-weight:700">Export &amp; Backups</h3>
+        <p style="margin:0;color:var(--mute);font-size:13px">Export the repository to CSV (Excel / Google Sheets) or download a full JSON backup.</p>
         <div style="display:flex;flex-direction:column;gap:10px;margin-top:8px">
-          <a href="/api/export.csv" class="btn btn-primary" style="justify-content:flex-start;padding:12px 14px">
-            📊 Export Swipe File to CSV (Excel / Sheets)
+          <a href="/api/export.csv" class="btn btn-primary" style="justify-content:flex-start;padding:11px 14px">
+            Export Repository to CSV (Excel / Sheets)
           </a>
           ${state.user.role === 'admin' ? `
-            <a href="/api/export.json" class="btn" style="justify-content:flex-start;padding:12px 14px">
-              🗄️ Download Full JSON Backup
+            <a href="/api/export.json" class="btn" style="justify-content:flex-start;padding:11px 14px">
+              Download Full JSON Backup
             </a>
           ` : ''}
         </div>
@@ -760,14 +726,14 @@ function renderTeamView() {
   `;
 }
 
-// ---------- Upload File Modal (Simple) ----------
+// ---------- Upload File Modal ----------
 function openUploadModal() {
   const root = document.getElementById('modal-root');
   root.innerHTML = `
     <div class="modal-backdrop" id="upload-backdrop">
       <div class="modal-dialog" style="max-width:500px">
         <div class="modal-head">
-          <h3>📎 Upload Video, Screenshot or File</h3>
+          <h3>Upload Video, Screenshot or File</h3>
           <button class="icon-btn" id="btn-close-upload">✕</button>
         </div>
         <form id="simple-upload-form" class="modal-body">
@@ -779,7 +745,7 @@ function openUploadModal() {
             <label>Paste Prompt / Tool Link / Note (optional)</label>
             <textarea name="promptInput" rows="3" placeholder="Paste the prompt or tool used in this content…"></textarea>
           </div>
-          <button type="submit" class="btn btn-primary" id="btn-do-upload" style="width:100%;padding:11px">Upload &amp; Auto-Analyze →</button>
+          <button type="submit" class="btn btn-primary" id="btn-do-upload" style="width:100%;padding:11px">Upload &amp; Save →</button>
         </form>
       </div>
     </div>
@@ -799,23 +765,24 @@ function openUploadModal() {
       for (const f of root.querySelector('#up-files').files) fd.append('files', f);
       const res = await api('/api/items', { method: 'POST', body: fd });
       close();
-      toast('✓ Uploaded & analyzed!');
+      toast('✓ Uploaded & saved!');
       await loadAllData();
       openItemDetail(res.item.id);
     } catch (err) {
       btn.disabled = false;
-      btn.textContent = 'Upload & Auto-Analyze →';
+      btn.textContent = 'Upload & Save →';
       toast(err.message, true);
     }
   });
 }
 
-// ---------- Item Detail Theater Modal ----------
+// ---------- Item Detail Theater Modal (Simple Title + Description + Attached Tool/Prompt) ----------
 async function openItemDetail(id) {
   try {
     const res = await api(`/api/items/${id}`);
     state.activeItem = res.item;
-    state.activeTab = 'breakdown';
+    state.activeTab = 'overview';
+    state.showAddResource = false;
     state.stageMode = 'auto';
     renderModal();
     scheduleBackgroundPoll();
@@ -852,14 +819,14 @@ function renderStagePlayer(item) {
   } else {
     viewportHtml = `
       <div style="text-align:center;padding:28px;max-width:420px">
-        ${item.thumb ? `<img src="${esc(item.thumb)}" alt="" style="max-height:240px;border-radius:10px;margin-bottom:14px">` : `<div style="font-size:38px;margin-bottom:8px">🎬</div>`}
-        <div style="font-weight:800;font-size:15px;margin-bottom:6px" class="bn">${esc(item.title)}</div>
-        <p style="color:#94A3B8;font-size:12.5px;margin-bottom:14px">
-          ${item.archive_status === 'processing' ? '⏳ Downloading HD video into the Vault right now — it will start playing automatically in a few seconds…' : 'Open the link or click below to pull the offline HD video into the Vault.'}
+        ${item.thumb ? `<img src="${esc(item.thumb)}" alt="" style="max-height:240px;border-radius:10px;margin-bottom:14px">` : `<div style="font-size:34px;margin-bottom:8px">▶</div>`}
+        <div style="font-weight:700;font-size:15px;margin-bottom:6px">${esc(item.title)}</div>
+        <p style="color:var(--mute);font-size:12.5px;margin-bottom:14px">
+          ${item.archive_status === 'processing' ? 'Downloading HD video into the Vault right now — it will start playing automatically in a few seconds…' : 'Open the original link or click below to pull the HD video into the player.'}
         </p>
         <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
           ${item.canonical_url ? `<a href="${esc(item.canonical_url)}" target="_blank" rel="noopener" class="btn btn-primary">↗ Open Original</a>` : ''}
-          ${state.boot?.features?.archive && item.canonical_url && item.archive_status !== 'processing' ? `<button class="btn" id="btn-stage-archive">⬇️ Fetch HD Video into Player</button>` : ''}
+          ${state.boot?.features?.archive && item.canonical_url && item.archive_status !== 'processing' ? `<button class="btn" id="btn-stage-archive">↓ Fetch HD Video</button>` : ''}
         </div>
       </div>
     `;
@@ -869,13 +836,13 @@ function renderStagePlayer(item) {
     <div class="detail-stage">
       <div class="stage-toolbar">
         <div class="stage-modes">
-          ${hasOffline ? `<button type="button" class="${mode === 'offline' ? 'active' : ''}" data-stage-mode="offline">▶ Instant HD Player</button>` : ''}
-          ${hasEmbed ? `<button type="button" class="${mode === 'embed' ? 'active' : ''}" data-stage-mode="embed">🌐 Platform Embed</button>` : ''}
+          ${hasOffline ? `<button type="button" class="${mode === 'offline' ? 'active' : ''}" data-stage-mode="offline">▶ HD Video Player</button>` : ''}
+          ${hasEmbed ? `<button type="button" class="${mode === 'embed' ? 'active' : ''}" data-stage-mode="embed">Platform Embed</button>` : ''}
         </div>
         <div>
           ${!hasOffline && state.boot?.features?.archive && item.canonical_url ? `
             <button type="button" class="btn btn-sm" id="btn-stage-archive">
-              ${item.archive_status === 'processing' ? '⏳ Fetching Video…' : '⬇️ Fetch HD Video'}
+              ${item.archive_status === 'processing' ? 'Downloading…' : '↓ Fetch HD Video'}
             </button>
           ` : ''}
         </div>
@@ -885,7 +852,7 @@ function renderStagePlayer(item) {
       </div>
       <div class="stage-foot">
         <span>${esc(PLATFORMS[item.platform]?.label || item.platform)} · ${esc(CONTENT_TYPES[item.content_type] || item.content_type)}${item.author_name ? ` · ${esc(item.author_name)}` : ''}</span>
-        ${item.canonical_url ? `<a href="${esc(item.canonical_url)}" target="_blank" rel="noopener">↗ Open Original Link</a>` : ''}
+        ${item.canonical_url ? `<a href="${esc(item.canonical_url)}" target="_blank" rel="noopener">↗ Open Original Post</a>` : ''}
       </div>
     </div>
   `;
@@ -896,16 +863,17 @@ function renderModal() {
   const item = state.activeItem;
   if (!item) { root.innerHTML = ''; return; }
   const ai = item.ai || {};
-  const hook = ai.hook || { text: item.hook_text || '' };
-  const story = ai.story || { structure: '', beats: [] };
+  const summaryText = item.summary || ai.summary || item.caption || 'No description provided.';
+  const usageText = item.what_it_does || ai.what_it_does || '';
 
   root.innerHTML = `
     <div class="modal-backdrop" id="detail-backdrop">
       <div class="modal-dialog xl">
         <div class="modal-head">
           <div style="display:flex;align-items:center;gap:10px;min-width:0">
-            <span class="platform-pill" style="background:${(PLATFORMS[item.platform] || PLATFORMS.web).color}">${esc((PLATFORMS[item.platform] || PLATFORMS.web).label)}</span>
-            <h3 class="bn" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(item.title)}</h3>
+            <span class="cat-badge">${esc((PLATFORMS[item.platform] || PLATFORMS.web).label)}</span>
+            <span class="cat-badge">${esc(item.category)}</span>
+            <span style="font-size:12px;color:var(--mute)">Shared by ${esc(item.shared_by?.name || 'Team')} · ${relTime(item.created_at)}</span>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
             <select id="detail-status-select" class="filter-select">
@@ -922,127 +890,105 @@ function renderModal() {
 
           <div class="detail-pane">
             <div class="detail-tabs">
-              <button type="button" class="${state.activeTab === 'breakdown' ? 'active' : ''}" data-dtab="breakdown">🎯 Summary &amp; How to Use It</button>
-              <button type="button" class="${state.activeTab === 'resources' ? 'active' : ''}" data-dtab="resources">🧰 Prompts &amp; Tools (${(item.resources_list?.length || 0) + (item.attachments?.length || 0)})</button>
-              <button type="button" class="${state.activeTab === 'discussion' ? 'active' : ''}" data-dtab="discussion">💬 Team Notes (${item.comments_list?.length || 0})</button>
-              <button type="button" class="${state.activeTab === 'edit' ? 'active' : ''}" data-dtab="edit">✏️ Edit</button>
+              <button type="button" class="${state.activeTab === 'overview' ? 'active' : ''}" data-dtab="overview">Overview &amp; Resources</button>
+              <button type="button" class="${state.activeTab === 'edit' ? 'active' : ''}" data-dtab="edit">Edit Title &amp; Description</button>
             </div>
 
-            ${state.activeTab === 'breakdown' ? `
+            ${state.activeTab === 'overview' ? `
+              <div>
+                <h2 style="margin:0 0 10px;font-size:20px;font-weight:700;line-height:1.35;color:var(--ink)">${esc(item.title)}</h2>
+                <div class="info-box">
+                  <h4>Description</h4>
+                  <p style="margin:0;font-size:14px;line-height:1.6;color:var(--ink)">${esc(summaryText)}</p>
+                  ${usageText && usageText !== summaryText ? `
+                    <p style="margin:10px 0 0;padding-top:10px;border-top:1px solid var(--border);font-size:13.5px;line-height:1.55;color:var(--ink-2)">
+                      <strong style="color:var(--ink)">How to use it:</strong> ${esc(usageText)}
+                    </p>
+                  ` : ''}
+                </div>
+              </div>
+
               ${item.comment_keyword ? `
                 <div class="kw-banner ${item.resource_status === 'received' ? 'done' : ''}" style="padding:10px 14px;font-size:13px">
-                  <span>💬 Creator CTA: <strong>Comment "${esc(item.comment_keyword)}"</strong></span>
+                  <span>Comment Keyword Trigger: <strong>"${esc(item.comment_keyword)}"</strong></span>
                   <select id="detail-res-status" class="filter-select" style="margin-left:auto;padding:4px 8px">
                     ${Object.entries(RESOURCE_STATUSES).map(([k, v]) => `<option value="${k}" ${item.resource_status === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}
                   </select>
                 </div>
               ` : ''}
 
-              <div class="info-box">
-                <h4>
-                  <span>📋 What It Is &amp; How We Use It</span>
-                  ${item.usefulness ? `<span class="score-badge">★ ${item.usefulness}/10</span>` : ''}
-                </h4>
-                <p style="margin:0 0 8px;font-size:13.8px;color:var(--ink)"><strong>Summary:</strong> ${esc(item.summary || ai.summary || item.caption || 'Auto-generated summary ready.')}</p>
-                <p style="margin:0;font-size:13.8px;color:var(--primary)"><strong>What it can do for BMDGL:</strong> ${esc(item.what_it_does || ai.what_it_does || item.notes || 'Gives our team a proven hook/story/payoff format and reusable workflow.')}</p>
-              </div>
-
-              ${(item.resources_list || []).length ? `
-                <div class="info-box" style="border-color:var(--primary)">
-                  <h4>
-                    <span>✨ Attached Prompt / Tool</span>
-                    ${item.resources_list[0].content ? `<button class="btn btn-sm btn-primary" data-copy-text="${esc(item.resources_list[0].content)}">📋 Copy Prompt</button>` : ''}
-                  </h4>
-                  ${item.resources_list[0].content ? `<div class="prompt-block">${esc(item.resources_list[0].content)}</div>` : ''}
-                  ${item.resources_list[0].url ? `<div style="margin-top:8px"><a href="${esc(item.resources_list[0].url)}" target="_blank" rel="noopener" class="btn btn-sm btn-primary">↗ Open Tool / Drive Link</a></div>` : ''}
+              <div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                  <span style="font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--mute)">
+                    Attached Prompt / Tool (${(item.resources_list || []).length})
+                  </span>
+                  <button type="button" class="btn btn-sm" id="btn-toggle-add-res">
+                    ${state.showAddResource ? 'Cancel' : '＋ Add Prompt / Link'}
+                  </button>
                 </div>
-              ` : ''}
 
-              <div class="hsp-grid">
-                <div class="hsp-card hook">
-                  <div class="hsp-kicker">
-                    <span>1. Scroll-Stopping Hook (0–3s)</span>
-                    <span>${esc(hook.type || 'Opening Hook')}</span>
+                ${state.showAddResource ? `
+                  <form id="add-res-form" class="info-box" style="margin-bottom:12px">
+                    <h4>Add Prompt or Tool Link</h4>
+                    <div class="field">
+                      <input name="title" placeholder="Title (e.g. GitHub Repo / System Prompt)">
+                    </div>
+                    <div class="field">
+                      <input name="url" placeholder="Tool / GitHub / Google Drive / Skool URL (https://…)">
+                    </div>
+                    <div class="field">
+                      <textarea name="content" rows="3" placeholder="Or paste prompt text / instructions…"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm">Save Resource</button>
+                  </form>
+                ` : ''}
+
+                ${(item.resources_list || []).length === 0 ? `
+                  <div class="info-box" style="color:var(--mute);font-size:13px">
+                    No prompt or tool link attached yet. Click <strong>＋ Add Prompt / Link</strong> above to attach one.
                   </div>
-                  <div style="font-size:14.5px;font-weight:800;margin-bottom:4px" class="bn">"${esc(hook.text || item.title)}"</div>
-                  ${hook.why_it_works ? `<div style="font-size:12.5px;color:var(--mute)"><strong>Why it works:</strong> ${esc(hook.why_it_works)}</div>` : ''}
-                </div>
-
-                <div class="hsp-card story">
-                  <div class="hsp-kicker"><span>2. Story Structure &amp; Pacing</span></div>
-                  <div style="font-weight:700;font-size:13px;margin-bottom:6px">${esc(story.structure || 'Hook → Problem → Solution Demo → CTA')}</div>
-                  ${(story.beats || []).length ? `
-                    <ul style="margin:0;padding-left:18px;font-size:12.5px;color:var(--ink-2)">
-                      ${story.beats.map(b => `<li>${esc(b)}</li>`).join('')}
-                    </ul>
-                  ` : ''}
-                </div>
-
-                <div class="hsp-card payoff">
-                  <div class="hsp-kicker"><span>3. Payoff &amp; Bangla Hook Ideas</span></div>
-                  <div style="font-size:13px;margin-bottom:8px"><strong>Payoff:</strong> ${esc(ai.payoff || 'Concrete tool/workflow delivered fast.')}</div>
-                  ${(ai.bangla_hooks || []).length ? `
-                    <div style="display:flex;flex-direction:column;gap:6px">
-                      ${ai.bangla_hooks.map(bh => `
-                        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;background:var(--surface-2);padding:7px 10px;border-radius:8px">
-                          <span class="bn" style="font-weight:700;font-size:13px">${esc(bh)}</span>
-                          <button class="btn btn-sm" data-copy-text="${esc(bh)}">Copy</button>
-                        </div>
-                      `).join('')}
-                    </div>
-                  ` : ''}
-                </div>
-              </div>
-            ` : ''}
-
-            ${state.activeTab === 'resources' ? `
-              ${(item.resources_list || []).map(r => `
-                <div class="info-box">
-                  <h4>
-                    <span><span class="cat-badge">${esc(RESOURCE_KINDS[r.kind] || r.kind)}</span> ${esc(r.title || 'Resource')}</span>
-                    <div style="display:flex;gap:6px">
-                      ${r.content ? `<button class="btn btn-sm btn-primary" data-copy-text="${esc(r.content)}">📋 Copy</button>` : ''}
-                      ${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener" class="btn btn-sm">↗ Open</a>` : ''}
-                      <button class="btn btn-sm btn-danger" data-del-res="${r.id}">✕</button>
-                    </div>
-                  </h4>
-                  ${r.content ? `<div class="prompt-block">${esc(r.content)}</div>` : ''}
-                  ${r.url ? `<div style="font-size:12px;margin-top:6px"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.url)}</a></div>` : ''}
-                </div>
-              `).join('')}
-
-              <form id="add-res-form" class="info-box">
-                <h4>＋ Add Another Prompt or Tool Link</h4>
-                <div class="field">
-                  <input name="title" placeholder="Title (optional, e.g. Claude Prompt / Drive Folder)">
-                </div>
-                <div class="field">
-                  <textarea name="content" rows="3" placeholder="Paste prompt text or instructions…"></textarea>
-                </div>
-                <div class="field">
-                  <input name="url" placeholder="Or paste tool / Google Drive / Skool URL (https://…)">
-                </div>
-                <button type="submit" class="btn btn-primary btn-sm">Save Prompt / Tool</button>
-              </form>
-            ` : ''}
-
-            ${state.activeTab === 'discussion' ? `
-              <div style="display:flex;flex-direction:column;gap:8px">
-                ${(item.comments_list || []).map(c => `
-                  <div class="info-box" style="padding:10px 13px">
-                    <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--mute);margin-bottom:4px">
-                      <strong>${esc(c.name || 'Teammate')}</strong>
-                      <span>${relTime(c.created_at)}</span>
-                    </div>
-                    <div style="white-space:pre-wrap;font-size:13px">${esc(c.body)}</div>
+                ` : (item.resources_list || []).map(r => `
+                  <div class="info-box" style="margin-bottom:10px">
+                    <h4>
+                      <span><span class="cat-badge">${esc(RESOURCE_KINDS[r.kind] || r.kind)}</span> ${esc(r.title || 'Attached Resource')}</span>
+                      <div style="display:flex;gap:6px">
+                        ${r.content ? `<button class="btn btn-sm" data-copy-text="${esc(r.content)}">Copy Text</button>` : ''}
+                        ${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener" class="btn btn-sm btn-primary">↗ Open Link</a>` : ''}
+                        <button class="btn btn-sm btn-danger" data-del-res="${r.id}" title="Remove resource">✕</button>
+                      </div>
+                    </h4>
+                    ${r.content ? `<div class="prompt-block">${esc(r.content)}</div>` : ''}
+                    ${r.url ? `<div style="font-family:var(--font-mono);font-size:12px;margin-top:8px;word-break:break-all"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.url)}</a></div>` : ''}
                   </div>
                 `).join('')}
               </div>
 
-              <form id="comment-form" style="display:flex;gap:8px">
-                <input name="body" required placeholder="Write a quick note for the team…" style="flex:1;padding:10px 13px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--ink)">
-                <button type="submit" class="btn btn-primary">Send</button>
-              </form>
+              ${item.caption ? `
+                <div class="info-box">
+                  <h4>Original Post Caption</h4>
+                  <div style="font-size:12.5px;color:var(--ink-2);white-space:pre-wrap;line-height:1.5">${esc(item.caption)}</div>
+                </div>
+              ` : ''}
+
+              <div>
+                <div style="font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--mute);margin-bottom:8px">
+                  Team Notes (${(item.comments_list || []).length})
+                </div>
+                ${(item.comments_list || []).map(c => `
+                  <div class="info-box" style="padding:10px 14px;margin-bottom:8px">
+                    <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--mute);margin-bottom:4px">
+                      <strong style="color:var(--ink)">${esc(c.name || 'Teammate')}</strong>
+                      <span>${relTime(c.created_at)}</span>
+                    </div>
+                    <div style="white-space:pre-wrap;font-size:13px;color:var(--ink-2)">${esc(c.body)}</div>
+                  </div>
+                `).join('')}
+
+                <form id="comment-form" style="display:flex;gap:8px;margin-top:6px">
+                  <input name="body" required placeholder="Add a quick note for the team…" style="flex:1;padding:9px 13px;border-radius:9px;border:1px solid var(--border-2);background:var(--bg);color:var(--ink)">
+                  <button type="submit" class="btn btn-primary">Post</button>
+                </form>
+              </div>
             ` : ''}
 
             ${state.activeTab === 'edit' ? `
@@ -1058,18 +1004,18 @@ function renderModal() {
                   </select>
                 </div>
                 <div class="field">
-                  <label>Summary</label>
-                  <textarea name="summary" rows="2">${esc(item.summary || '')}</textarea>
+                  <label>Description</label>
+                  <textarea name="summary" rows="3">${esc(item.summary || '')}</textarea>
                 </div>
                 <div class="field">
-                  <label>What It Can Do for BMDGL</label>
+                  <label>How to Use It (optional)</label>
                   <textarea name="what_it_does" rows="2">${esc(item.what_it_does || '')}</textarea>
                 </div>
-                <div style="display:flex;justify-content:space-between;margin-top:12px">
-                  <button type="button" class="btn btn-danger" id="btn-delete-item">🗑️ Delete</button>
+                <div style="display:flex;justify-content:space-between;margin-top:14px">
+                  <button type="button" class="btn btn-danger" id="btn-delete-item">Delete Item</button>
                   <div style="display:flex;gap:8px">
-                    <button type="button" class="btn" id="btn-reanalyze">⚡ Auto-Regenerate Breakdown</button>
-                    <button type="submit" class="btn btn-primary">Save</button>
+                    <button type="button" class="btn" id="btn-reanalyze">↻ Auto-Generate Title &amp; Description</button>
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
                   </div>
                 </div>
               </form>
@@ -1094,7 +1040,6 @@ function bindModalEvents(root, item) {
     if (e.target.id === 'detail-backdrop') close();
   });
 
-  // Ensure HTML5 video plays smoothly even if browser blocks unmuted autoplay
   const vid = root.querySelector('#stage-video-el');
   if (vid) {
     vid.play().catch(() => {
@@ -1115,6 +1060,11 @@ function bindModalEvents(root, item) {
       state.activeTab = btn.dataset.dtab;
       renderModal();
     });
+  });
+
+  root.querySelector('#btn-toggle-add-res')?.addEventListener('click', () => {
+    state.showAddResource = !state.showAddResource;
+    renderModal();
   });
 
   root.querySelectorAll('[data-copy-text]').forEach(btn => {
@@ -1155,7 +1105,7 @@ function bindModalEvents(root, item) {
     try {
       const res = await api(`/api/items/${item.id}/archive`, { method: 'POST' });
       state.activeItem = res.item;
-      toast('Fetching HD video into Vault…');
+      toast('Downloading HD video into Vault…');
       renderModal();
       scheduleBackgroundPoll();
     } catch (e) { toast(e.message, true); }
@@ -1171,7 +1121,8 @@ function bindModalEvents(root, item) {
     try {
       const res = await api(`/api/items/${item.id}/resources`, { method: 'POST', body: { kind, title, content, url } });
       state.activeItem = res.item;
-      toast('✓ Saved');
+      state.showAddResource = false;
+      toast('✓ Resource saved');
       renderModal();
       loadAllData();
     } catch (err) { toast(err.message, true); }
@@ -1200,7 +1151,8 @@ function bindModalEvents(root, item) {
     const fd = new FormData(e.target);
     const res = await api(`/api/items/${item.id}`, { method: 'PATCH', body: Object.fromEntries(fd.entries()) });
     state.activeItem = res.item;
-    toast('✓ Saved');
+    state.activeTab = 'overview';
+    toast('✓ Changes saved');
     renderModal();
     loadAllData();
   });
@@ -1209,7 +1161,8 @@ function bindModalEvents(root, item) {
     try {
       const res = await api(`/api/items/${item.id}/reanalyze`, { method: 'POST' });
       state.activeItem = res.item;
-      toast('Auto-generating breakdown…');
+      state.activeTab = 'overview';
+      toast('Auto-generating title & description…');
       renderModal();
       scheduleBackgroundPoll();
     } catch (e) { toast(e.message, true); }
@@ -1231,18 +1184,8 @@ let searchTimer = null;
 function bindShellEvents() {
   const app = document.getElementById('app');
 
-  app.querySelector('#btn-mobile-menu')?.addEventListener('click', () => {
-    state.sidebarOpen = !state.sidebarOpen;
-    renderApp();
-  });
-  app.querySelector('#sb-backdrop')?.addEventListener('click', () => {
-    state.sidebarOpen = false;
-    renderApp();
-  });
-
   app.querySelector('#btn-open-upload')?.addEventListener('click', () => openUploadModal());
 
-  // Frictionless 2-Box Quick Drop Submit
   const dropForm = app.querySelector('#instant-drop-form');
   const qcUrl = app.querySelector('#qc-url');
   const qcHint = app.querySelector('#qc-live-hint');
@@ -1251,7 +1194,7 @@ function bindShellEvents() {
     const info = analyzeUrl(extractUrl(qcUrl.value) || qcUrl.value.trim());
     if (info && qcHint) {
       const plat = PLATFORMS[info.platform] || PLATFORMS.web;
-      qcHint.innerHTML = `<span style="color:var(--green);font-weight:700">✓ ${esc(plat.label)} ${esc(CONTENT_TYPES[info.contentType] || 'Link')} detected</span> — hit Enter or click Save to pull video &amp; auto-generate breakdown.`;
+      qcHint.innerHTML = `<span style="color:var(--accent);font-weight:600">✓ ${esc(plat.label)} ${esc(CONTENT_TYPES[info.contentType] || 'Link')} detected</span> — hit Enter or click Save to pull the video and generate the title &amp; description.`;
     }
   });
 
@@ -1275,7 +1218,7 @@ function bindShellEvents() {
           ...parsed,
         },
       });
-      toast('✓ Saved to Vault! Fetching video & breakdown…');
+      toast('✓ Saved to Vault! Fetching video & description…');
       await loadAllData();
       openItemDetail(res.item.id);
     } catch (err) {
@@ -1295,49 +1238,24 @@ function bindShellEvents() {
 
   app.querySelectorAll('[data-nav]').forEach(btn => {
     btn.addEventListener('click', () => {
-      state.sidebarOpen = false;
       state.view = 'vault';
       for (const k of Object.keys(state.filters)) if (k !== 'sort' && k !== 'q') state.filters[k] = '';
       const nav = btn.dataset.nav;
       if (nav === 'fav') state.filters.fav = '1';
       else if (nav === 'pending') state.filters.pending = '1';
-      else if (nav === 'testing') state.filters.status = 'testing';
-      else if (nav === 'used') state.filters.status = 'used';
       loadItems();
     });
   });
 
   app.querySelectorAll('[data-view]').forEach(btn => {
     btn.addEventListener('click', async () => {
-      state.sidebarOpen = false;
       const v = btn.dataset.view;
       state.view = v;
       if (v === 'prompts') state.prompts = (await api('/api/library/prompts')).prompts || [];
-      else if (v === 'hooks') state.hooks = (await api('/api/library/hooks')).hooks || [];
       else if (v === 'tools') state.tools = (await api('/api/library/tools')).tools || [];
       else if (v === 'team') state.team = await api('/api/team');
       renderApp();
     });
-  });
-
-  app.querySelectorAll('[data-collection]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      state.sidebarOpen = false;
-      state.view = 'vault';
-      for (const k of Object.keys(state.filters)) if (k !== 'sort') state.filters[k] = '';
-      state.filters.collection = btn.dataset.collection;
-      loadItems();
-    });
-  });
-
-  app.querySelector('#btn-new-collection')?.addEventListener('click', async () => {
-    const name = prompt('New collection name:');
-    if (!name || !name.trim()) return;
-    try {
-      await api('/api/collections', { method: 'POST', body: { name: name.trim(), emoji: '📁' } });
-      await loadAllData();
-      toast('✓ Collection created');
-    } catch (e) { toast(e.message, true); }
   });
 
   app.querySelectorAll('[data-plat]').forEach(btn => {
@@ -1349,7 +1267,6 @@ function bindShellEvents() {
     });
   });
 
-  app.querySelector('#flt-collection')?.addEventListener('change', (e) => { state.filters.collection = e.target.value; loadItems(); });
   app.querySelector('#flt-category')?.addEventListener('change', (e) => { state.filters.category = e.target.value; loadItems(); });
   app.querySelector('#flt-sort')?.addEventListener('change', (e) => { state.filters.sort = e.target.value; loadItems(); });
 
@@ -1389,7 +1306,6 @@ function bindShellEvents() {
     renderAuth();
   });
 
-  // Hover video preview on cards
   app.querySelectorAll('.vcard').forEach(card => {
     const vid = card.querySelector('video[data-hover-video]');
     if (vid) {
@@ -1429,7 +1345,10 @@ function bindShellEvents() {
   });
 
   app.querySelectorAll('[data-copy-text]').forEach(btn => {
-    btn.addEventListener('click', () => copyText(btn.dataset.copyText));
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      copyText(btn.dataset.copyText);
+    });
   });
 }
 

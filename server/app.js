@@ -142,6 +142,13 @@ function listRow(r) {
     favorite: Boolean(r.favorite),
     comments: r.comments || 0,
     resources: r.resources || 0,
+    primary_resource: r.res_id ? {
+      id: r.res_id,
+      kind: r.res_kind,
+      title: r.res_title,
+      content: r.res_content,
+      url: r.res_url,
+    } : null,
   };
 }
 
@@ -153,7 +160,12 @@ const LIST_SELECT = `
     EXISTS(SELECT 1 FROM upvotes v WHERE v.item_id = i.id AND v.user_id = @me) AS upvoted,
     EXISTS(SELECT 1 FROM favorites f WHERE f.item_id = i.id AND f.user_id = @me) AS favorite,
     (SELECT COUNT(*) FROM comments c WHERE c.item_id = i.id) AS comments,
-    (SELECT COUNT(*) FROM resources r WHERE r.item_id = i.id) AS resources
+    (SELECT COUNT(*) FROM resources r WHERE r.item_id = i.id) AS resources,
+    (SELECT r.id FROM resources r WHERE r.item_id = i.id ORDER BY r.id LIMIT 1) AS res_id,
+    (SELECT r.kind FROM resources r WHERE r.item_id = i.id ORDER BY r.id LIMIT 1) AS res_kind,
+    (SELECT r.title FROM resources r WHERE r.item_id = i.id ORDER BY r.id LIMIT 1) AS res_title,
+    (SELECT r.content FROM resources r WHERE r.item_id = i.id ORDER BY r.id LIMIT 1) AS res_content,
+    (SELECT r.url FROM resources r WHERE r.item_id = i.id ORDER BY r.id LIMIT 1) AS res_url
   FROM items i LEFT JOIN users u ON u.id = i.shared_by`;
 
 function likeParam(q) {
@@ -437,9 +449,10 @@ app.post('/api/items', upload.array('files', 10), (req, res) => {
           .run(main.rel, main.mime, main.mime.startsWith('video/') ? 'video' : 'image', itemId);
       }
       const firstFile = (req.files || [])[0]?.originalname?.replace(/\.[a-z0-9]+$/i, '');
-      const fallbackTitle = title || firstFile || resources[0]?.title || (info ? `${PLATFORMS[info.platform]?.label || info.platform} ${CONTENT_TYPES[info.contentType] || 'Content'}` : 'Shared Content');
-      const initialSummary = s(d.notes, 500) || resources[0]?.content?.slice(0, 400) || `Fetching ${info ? PLATFORMS[info.platform]?.label : 'content'} details & video player…`;
-      const initialWhat = s(d.notes, 500) || (resources.length ? `Includes attached ${RESOURCE_KINDS[resources[0].kind] || 'resource'} ready to copy and use in BMDGL workflows.` : 'Auto-analyzing hook, story, payoff, and how our team can adapt this.');
+      const customResTitle = resources[0]?.title && !/^(Tool \/ Resource Link|Shared Prompt \/ Instructions)$/i.test(resources[0].title) ? resources[0].title : '';
+      const fallbackTitle = title || firstFile || customResTitle || (info ? `${PLATFORMS[info.platform]?.label || info.platform} ${CONTENT_TYPES[info.contentType] || 'Content'}` : 'Shared Content');
+      const initialSummary = s(d.notes, 500) || resources[0]?.content?.slice(0, 400) || `Fetching ${info ? PLATFORMS[info.platform]?.label : 'content'} title & description…`;
+      const initialWhat = s(d.notes, 500) || (resources.length ? `Includes attached ${RESOURCE_KINDS[resources[0].kind] || 'resource'} ready to open or copy.` : 'Auto-detecting description and usage details…');
       db.prepare('UPDATE items SET title = ?, summary = ?, what_it_does = ? WHERE id = ?')
         .run(s(fallbackTitle, 200), initialSummary, initialWhat, itemId);
       return itemId;
