@@ -67,9 +67,8 @@ export async function archiveVideo(itemId, url) {
   // Remove older copies of this item
   for (const f of fs.readdirSync(MEDIA_DIR)) if (f.startsWith(`item-${itemId}.`)) fs.rmSync(path.join(MEDIA_DIR, f), { force: true });
 
-  const format = config.hasFfmpeg
-    ? 'bv*[height<=720][vcodec^=avc]+ba[ext=m4a]/bv*[height<=720]+ba/b[height<=720]/bv*+ba/b'
-    : 'b[height<=720][ext=mp4]/b[ext=mp4]/b';
+  // Prefer single-file progressive H.264+AAC MP4 (e.g. Facebook 'hd'/'sd' or standard MP4) so HTML5 <video> plays with zero merge issues
+  const format = 'hd/sd/b[height<=1080][ext=mp4]/bv*[height<=1080][vcodec^=avc]+ba[ext=m4a]/bv*[height<=720]+ba/b[ext=mp4]/b';
   const args = ytdlpArgs([
     '-f', format,
     '--max-filesize', `${config.maxArchiveMB}M`,
@@ -77,16 +76,24 @@ export async function archiveVideo(itemId, url) {
     '--print', 'after_move:filepath',
     '--no-part',
   ]);
-  if (config.hasFfmpeg) args.push('--merge-output-format', 'mp4', '--ffmpeg-location', config.ffmpegBin);
+  if (config.hasFfmpeg) args.push('--merge-output-format', 'mp4');
   args.push(url);
   const out = await runYtdlp(args, 15 * 60 * 1000);
   const lines = out.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   let file = lines.reverse().find(l => fs.existsSync(l));
   if (!file) {
-    const found = fs.readdirSync(MEDIA_DIR).find(f => f.startsWith(`item-${itemId}.`));
-    if (found) file = path.join(MEDIA_DIR, found);
+    // Prefer .mp4 over any leftover fragment
+    const candidates = fs.readdirSync(MEDIA_DIR).filter(f => f.startsWith(`item-${itemId}.`));
+    const mp4 = candidates.find(f => f.endsWith('.mp4')) || candidates[0];
+    if (mp4) file = path.join(MEDIA_DIR, mp4);
   }
   if (!file) throw new Error(`No file was downloaded (video may be private, need login cookies, or exceed ${config.maxArchiveMB} MB).`);
+  // Clean up any leftover stream fragments
+  for (const f of fs.readdirSync(MEDIA_DIR)) {
+    if (f.startsWith(`item-${itemId}.`) && path.join(MEDIA_DIR, f) !== file) {
+      fs.rmSync(path.join(MEDIA_DIR, f), { force: true });
+    }
+  }
   const rel = `media/${path.basename(file)}`;
   return { relPath: rel, mime: mimeFor(file) };
 }

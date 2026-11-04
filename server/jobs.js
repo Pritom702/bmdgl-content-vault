@@ -4,7 +4,7 @@ import { config } from './config.js';
 import { analyzeUrl, isVideoPlatform } from '../public/js/platforms.js';
 import { fetchMetadata, resolveUrl } from './metadata.js';
 import { archiveVideo, saveThumbnail, thumbnailFromVideo, absData, removeDataFile } from './media.js';
-import { aiEnabled, analyzeItem } from './ai.js';
+import { aiEnabled, analyzeItem, buildSmartLocalAnalysis } from './ai.js';
 
 const queue = [];
 const queued = new Set();
@@ -118,27 +118,34 @@ async function process({ id, steps }) {
     if (t) touch(id, { thumb_path: t });
   }
 
-  // 3. AI analysis
+  // 3. AI analysis (or instant smart auto-breakdown when GEMINI_API_KEY is not set)
   if (steps.ai) {
-    if (!aiEnabled()) { touch(id, { ai_status: 'disabled' }); return; }
     touch(id, { ai_status: 'processing', ai_error: null });
     try {
       item = getItem(id);
       if (!item) return;
       const resources = db.prepare('SELECT kind, title, content, url FROM resources WHERE item_id = ? ORDER BY id').all(id);
       const sharer = item.shared_by ? db.prepare('SELECT name FROM users WHERE id = ?').get(item.shared_by) : null;
-      const media = [];
-      if (item.media_path) {
-        const p = absData(item.media_path);
-        if (p && fs.existsSync(p)) media.push({ absPath: p, mime: item.media_mime || 'video/mp4' });
-      }
-      for (const a of db.prepare('SELECT file_path, mime FROM attachments WHERE item_id = ? ORDER BY id').all(id)) {
-        const p = absData(a.file_path);
-        if (p && fs.existsSync(p) && a.mime && (a.mime.startsWith('video/') || a.mime.startsWith('image/') || a.mime === 'application/pdf')) {
-          media.push({ absPath: p, mime: a.mime });
+      let analysis;
+      let source = 'smart-auto';
+      if (aiEnabled()) {
+        const media = [];
+        if (item.media_path) {
+          const p = absData(item.media_path);
+          if (p && fs.existsSync(p)) media.push({ absPath: p, mime: item.media_mime || 'video/mp4' });
         }
+        for (const a of db.prepare('SELECT file_path, mime FROM attachments WHERE item_id = ? ORDER BY id').all(id)) {
+          const p = absData(a.file_path);
+          if (p && fs.existsSync(p) && a.mime && (a.mime.startsWith('video/') || a.mime.startsWith('image/') || a.mime === 'application/pdf')) {
+            media.push({ absPath: p, mime: a.mime });
+          }
+        }
+        const res = await analyzeItem({ item, resources, sharerName: sharer?.name, media });
+        analysis = res.analysis;
+        source = res.source;
+      } else {
+        analysis = buildSmartLocalAnalysis({ item, resources });
       }
-      const { analysis, source } = await analyzeItem({ item, resources, sharerName: sharer?.name, media });
       const cur = getItem(id);
       if (!cur) return;
       const upd = {

@@ -1,27 +1,31 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { db, tx } from './db.js';
 import { config, ROOT } from './config.js';
 import { createUser } from './auth.js';
 
+export const TEAM_ACCOUNTS = [
+  { name: 'Pritom',   email: 'pritom@brightmind.com',   password: 'password123', role: 'admin' },
+  { name: 'Sharafat', email: 'sharafat@brightmind.com', password: 'password123', role: 'admin' },
+  { name: 'Minhaj',   email: 'minhaj@brightmind.com',   password: 'password123', role: 'member' },
+  { name: 'Saiful',   email: 'saiful@brightmind.com',   password: 'password123', role: 'member' },
+  { name: 'Rafi',     email: 'rafi@brightmind.com',     password: 'password123', role: 'member' },
+  { name: 'Tanvir',   email: 'tanvir@brightmind.com',   password: 'password123', role: 'member' },
+  { name: 'Akib',     email: 'akib@brightmind.com',     password: 'password123', role: 'member' },
+];
+
 export function seedIfEmpty() {
   if (process.env.NO_SEED === '1') return;
 
-  // 1. Seed default team accounts if no users exist yet
-  let adminId = null;
-  let sharafatId = null;
-  let editorId = null;
-  const existingUsers = db.prepare('SELECT id, email FROM users').all();
-  if (existingUsers.length === 0) {
-    adminId = createUser({ name: 'Pritom (Admin)', email: 'pritom@brightmind.com', password: 'password123', role: 'admin' });
-    sharafatId = createUser({ name: 'Sharafat', email: 'sharafat@brightmind.com', password: 'password123', role: 'admin' });
-    editorId = createUser({ name: 'Content Team', email: 'team@brightmind.com', password: 'password123', role: 'member' });
-    console.log('[seed] Created default team accounts (pritom@brightmind.com, sharafat@brightmind.com, team@brightmind.com).');
-  } else {
-    adminId = existingUsers[0].id;
-    sharafatId = existingUsers[1]?.id || adminId;
-    editorId = existingUsers[2]?.id || adminId;
+  // Ensure all 7 team accounts exist
+  const ids = [];
+  for (const acc of TEAM_ACCOUNTS) {
+    const row = db.prepare('SELECT id FROM users WHERE email = ?').get(acc.email);
+    if (row) ids.push(row.id);
+    else ids.push(createUser(acc));
   }
+  const [adminId, sharafatId, editorId] = ids;
 
   const itemCount = db.prepare('SELECT COUNT(*) AS n FROM items').get().n;
   if (itemCount > 0) return;
@@ -47,10 +51,16 @@ export function seedIfEmpty() {
   // Copy real reference videos & images from workspace if available so demo items play natively right away!
   const mediaDir = path.join(config.dataDir, 'media');
   const thumbDir = path.join(config.dataDir, 'thumbs');
-  const copyIfExists = (srcAbs, destSub, destName) => {
+  const copyIfExists = (srcAbs, destSub, destName, fixAudio = false) => {
     try {
       if (fs.existsSync(srcAbs)) {
         const dest = path.join(config.dataDir, destSub, destName);
+        if (fixAudio && config.hasFfmpeg) {
+          try {
+            execFileSync(config.ffmpegBin, ['-y', '-i', srcAbs, '-c:v', 'copy', '-c:a', 'aac', '-profile:a', 'aac_low', '-b:a', '128k', '-movflags', '+faststart', dest], { stdio: 'ignore', timeout: 30000, windowsHide: true });
+            return `${destSub}/${destName}`;
+          } catch { /* fall back to direct copy */ }
+        }
         fs.copyFileSync(srcAbs, dest);
         return `${destSub}/${destName}`;
       }
@@ -58,7 +68,7 @@ export function seedIfEmpty() {
     return null;
   };
 
-  const refReelMedia = copyIfExists(path.resolve(ROOT, '../references/ref_reel_2026-10-29.mp4'), 'media', 'seed-ref-reel.mp4');
+  const refReelMedia = copyIfExists(path.resolve(ROOT, '../references/ref_reel_2026-10-29.mp4'), 'media', 'seed-ref-reel.mp4', true);
   const adBMedia = copyIfExists(path.resolve(ROOT, '../bmdgl-week1-content/AdB_FreeAudit_15s_9x16.mp4'), 'media', 'seed-adb-15s.mp4');
   const adCMedia = copyIfExists(path.resolve(ROOT, '../bmdgl-week1-content/AdC_FreeAudit_Story_v3_54s_9x16.mp4'), 'media', 'seed-adc-story.mp4');
   const post1Thumb = copyIfExists(path.resolve(ROOT, '../bmdgl-week1-content/01_Post1_FreeAudit_4x5.png'), 'thumbs', 'seed-post1.png');

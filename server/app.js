@@ -122,12 +122,15 @@ function listRow(r) {
     title: r.title,
     author_name: r.author_name,
     thumb: fileUrl(r.thumb_path),
+    media_url: fileUrl(r.media_path),
+    media_mime: r.media_mime,
     has_media: Boolean(r.media_path),
     category: r.category,
     status: r.status,
     resource_status: r.resource_status,
     comment_keyword: r.comment_keyword,
     summary: r.summary,
+    what_it_does: r.what_it_does,
     hook_text: r.hook_text,
     usefulness: r.usefulness,
     ai_status: r.ai_status,
@@ -204,6 +207,18 @@ app.post('/api/auth/login', (req, res) => {
 app.post('/api/auth/logout', (req, res) => {
   destroySession(req, res);
   res.json({ ok: true });
+});
+
+app.post('/api/auth/forgot-password', (req, res) => {
+  const email = s(req.body.email, 200).toLowerCase();
+  const nextPw = String(req.body.newPassword || '');
+  if (!rateLimit(`forgot:${req.ip}:${email}`, 15)) throw new HttpError(429, 'Too many attempts. Try again in a few minutes.');
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  if (!user) throw bad('No teammate account found with that email.');
+  if (nextPw.length < 6) throw bad('New password must be at least 6 characters.');
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(nextPw), user.id);
+  createSession(res, user.id);
+  res.json({ user: publicUser(user) });
 });
 
 // PWA share target: phone "Share -> BMDGL Vault" lands here.
@@ -404,7 +419,7 @@ app.post('/api/items', upload.array('files', 10), (req, res) => {
         info ? info.contentType : (resources.some(x => x.kind === 'prompt') && !(req.files || []).length ? 'prompt' : 'other'),
         title, title ? 'user' : 'meta',
         s(d.notes, 5000), category || 'Other', category ? 1 : 0,
-        status, resourceStatus, commentKeyword || null, req.user.id, aiEnabled() ? 'pending' : 'disabled');
+        status, resourceStatus, commentKeyword || null, req.user.id, 'pending');
       const itemId = Number(r.lastInsertRowid);
       const insR = db.prepare('INSERT INTO resources(item_id, kind, title, content, url, created_by) VALUES (?, ?, ?, ?, ?, ?)');
       for (const x of resources) insR.run(itemId, x.kind, x.title, x.content, x.url, req.user.id);
@@ -421,10 +436,12 @@ app.post('/api/items', upload.array('files', 10), (req, res) => {
         db.prepare("UPDATE items SET media_path = ?, media_mime = ?, media_source = 'upload', content_type = ? WHERE id = ?")
           .run(main.rel, main.mime, main.mime.startsWith('video/') ? 'video' : 'image', itemId);
       }
-      if (!info && !title) {
-        const first = (req.files || [])[0]?.originalname || resources[0]?.title || '';
-        if (first) db.prepare("UPDATE items SET title = ? WHERE id = ?").run(s(first.replace(/\.[a-z0-9]+$/i, ''), 200), itemId);
-      }
+      const firstFile = (req.files || [])[0]?.originalname?.replace(/\.[a-z0-9]+$/i, '');
+      const fallbackTitle = title || firstFile || resources[0]?.title || (info ? `${PLATFORMS[info.platform]?.label || info.platform} ${CONTENT_TYPES[info.contentType] || 'Content'}` : 'Shared Content');
+      const initialSummary = s(d.notes, 500) || resources[0]?.content?.slice(0, 400) || `Fetching ${info ? PLATFORMS[info.platform]?.label : 'content'} details & video player…`;
+      const initialWhat = s(d.notes, 500) || (resources.length ? `Includes attached ${RESOURCE_KINDS[resources[0].kind] || 'resource'} ready to copy and use in BMDGL workflows.` : 'Auto-analyzing hook, story, payoff, and how our team can adapt this.');
+      db.prepare('UPDATE items SET title = ?, summary = ?, what_it_does = ? WHERE id = ?')
+        .run(s(fallbackTitle, 200), initialSummary, initialWhat, itemId);
       return itemId;
     });
     enqueue(id, { meta: Boolean(info), archive: Boolean(info), ai: true });
@@ -478,7 +495,6 @@ app.delete('/api/items/:id', (req, res) => {
 
 app.post('/api/items/:id/reanalyze', (req, res) => {
   const item = getItemOr404(req.params.id);
-  if (!aiEnabled()) throw bad('AI is not configured on the server. Add GEMINI_API_KEY to the .env file and restart.');
   enqueue(item.id, { meta: false, archive: false, ai: true });
   res.json({ item: itemDetail(item.id, req.user.id) });
 });

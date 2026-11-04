@@ -50,6 +50,6 @@ export const config = {
   maxArchiveMB: parseInt(process.env.MAX_ARCHIVE_MB || '150', 10),
   maxUploadMB: parseInt(process.env.MAX_UPLOAD_MB || '300', 10),
   secureCookies: bool(process.env.SECURE_COOKIES, false),
-  sessionDays: 30,
+  sessionDays: 3650,
 };
 
